@@ -137,7 +137,10 @@ def can_listener_thread(dbc_path: str, can_iface: str):
         s = decoded.get('Speed_kph')
         f = decoded.get('Force_N')
         if s is not None:
-            latest_speed = float(s)
+            if -0.1 < s < 0.1:
+                s = 0.0
+            else:
+                latest_speed = float(s)
         if f is not None:
             latest_force = float(f)
 
@@ -206,43 +209,6 @@ def choose_cycle_key(all_cycles):
 
 # ─────────────────────────────── MAIN CONTROL ─────────────────────────────────
 if __name__ == "__main__":
-    # 1) Load reference cycle from .mat(s)
-    base_folder = ""
-    all_cycles = load_drivecycle_mat_files(base_folder)
-
-    # Prompt the user:
-    cycle_keys = choose_cycle_key(all_cycles)
-
-
-    # ─── PID PARAMETERS (from Simulink blocks) ───────────────────────────────────
-    # Kp =  1.0    # e.g. read from your red “PID_P” block; adjust as needed
-    # Ki =  0.1    # from red “PID_I” block
-    # Kd =  0.005  # from red “PID_D” block
-    # Kff = 0.08   # from red “PID_P_FF” block (feedforward gain)
-
-    # Derivative filter coefficient (from your “Derivative filter Coeff” block)
-    # The Simulink formula uses: D_f[k] = D_f[k-1] + (T_s / (T_s + T_f)) * (D_k - D_f[k-1])
-    # where T_f = DerivativeFilterCoeff. In Simulink screenshot, that block had value = 5000.
-    T_f = 5000.0
-
-    # Sampling time (Simulink discrete sample time)
-    Ts = 0.01  # 100 Hz
-    FeedFwdTime = 0.65 # feedforward reference speed time
-
-    # ─── STATE FOR DISCRETE PID ──────────────────────────────────────────────────
-    # prev_error  = e[k-1]
-    # I_state     = I[k-1]
-    # D_f_state   = D_filtered[k-1]
-    prev_error   = 0.0
-    I_state      = 0.0
-    D_f_state    = 0.0
-    u_prev       = 0.0                # previous cycle’s output (percent)
-    # Add this to regulate the rate of change of pwm output u
-    max_delta = 50.0             # maximum % change per 0.01 s tick
-
-    # Track previous reference speed for derivative on ref (if needed)
-    prev_ref_speed = None
-
     # ─── PCA9685 PWM SETUP ──────────────────────────────────────────────────────
     i2c = busio.I2C(board.SCL, board.SDA)
     pca = PCA9685(i2c, address=0x40)
@@ -269,7 +235,7 @@ if __name__ == "__main__":
         print(f"[WARN] Could not set channel {channel} after {retries} retries.")
 
     # ─── START CAN LISTENER THREAD ───────────────────────────────────────────────
-    DBC_PATH = '/home/guiliang/Desktop/DriveRobot/KAVL_V3.dbc'
+    DBC_PATH = '/home/guiliang/Desktop/DrivingRobot/KAVL_V3.dbc'
     CAN_INTERFACE = 'can0'
 
     can_thread = threading.Thread(
@@ -279,13 +245,24 @@ if __name__ == "__main__":
     )
     can_thread.start()
 
-    # ─── MAIN 100 Hz CONTROL LOOP ─────────────────────────────────────────────────
-    # Record loop‐start time so we can log elapsed time from 0.0
-    t0 = time.time()
-    next_time = t0
+    # 1) Load reference cycle from .mat(s)
+    base_folder = ""
+    all_cycles = load_drivecycle_mat_files(base_folder)
 
-    # ── Prepare logging list ─────────────────────────────────────────────────────
-    log_data = []  # list of dicts
+    # Prompt the user:
+    cycle_keys = choose_cycle_key(all_cycles)
+
+    # Derivative filter coefficient     # where T_f = DerivativeFilterCoeff.
+    # The Simulink formula uses: D_f[k] = D_f[k-1] + (T_s / (T_s + T_f)) * (D_k - D_f[k-1])
+    T_f = 5000.0
+
+    # Sampling time (Simulink discrete sample time)
+    Ts = 0.01  # 100 Hz
+    FeedFwdTime = 0.65 # feedforward reference speed time
+
+    # Add this to regulate the rate of change of pwm output u
+    max_delta = 50.0             # maximum % change per 0.01 s tick
+
     for cycle_key in cycle_keys:
         cycle_data = all_cycles[cycle_key]
         print(f"\n[Main] Using reference cycle '{cycle_key}'")
@@ -317,15 +294,19 @@ if __name__ == "__main__":
         I_state        = 0.0
         D_f_state      = 0.0
         u_prev         = 0.0
+        # Track previous reference speed for derivative on ref (if needed)
+        prev_ref_speed = None
 
         # Prepare logging
         log_data       = []
+        # Record loop‐start time so we can log elapsed time from 0.0
         run_start      = datetime.now()
         t0             = time.time()
         next_time      = t0
 
         print(f"\n[Main] Starting cycle '{cycle_key}', duration={ref_time[-1]:.2f}s")
 
+    # ─── MAIN 100 Hz CONTROL LOOP ─────────────────────────────────────────────────
         print("[Main] Entering 100 Hz control loop. Press Ctrl+C to exit.\n")
         try:
             while True:
@@ -407,29 +388,11 @@ if __name__ == "__main__":
 
                 # ── 8) Send PWM to PCA9685: accel (ch=0) if u>=0, else brake (ch=4) ──
                 if u >= 0.0:
+                    set_duty(4, 0.0)            # ensure brake channel is zero
                     set_duty(0, u)      # channel 0 = accelerator
-                    # set_duty(4, 0.0)            # ensure brake channel is zero
                 else:
-                    # set_duty(0, 0.0)            # ensure accel channel is zero
+                    set_duty(0, 0.0)            # ensure accel channel is zero
                     set_duty(4, -u)    # channel 4 = brake
-
-
-                # # Test if the DR actuator works
-                # set_duty(0,30)
-                # time.sleep(5)
-                # set_duty(0,60)
-                # time.sleep(5)
-                # set_duty(0,100)
-                # time.sleep(5)               
-                # set_duty(4, 0.0)   # channel 4 = brake off
-                        
-                # set_duty(4,30)
-                # time.sleep(5)
-                # set_duty(4,60)
-                # time.sleep(5)
-                # set_duty(4,100)
-                # time.sleep(5) 
-                # set_duty(4,0)
 
                 # ── 9) Debug printout ─────────────────────────────────────────────
                 print(
