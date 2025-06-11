@@ -1,0 +1,2 @@
+# ignore all .xlsx in Log_DriveRobot
+/Log_DriveRobot/*.xlsx
