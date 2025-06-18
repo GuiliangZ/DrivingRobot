@@ -80,7 +80,7 @@ if __name__ == "__main__":
         daemon=True
     )
     can_thread.start()
-    
+
     # ─── PARAMETERS SETUP ───────────────────────────────────────────────  
     # Load reference cycle from .mat(s)
     base_folder = ""
@@ -158,6 +158,12 @@ if __name__ == "__main__":
                 v_meas = latest_speed if latest_speed is not None else 0.0
                 F_meas = latest_force if latest_force is not None else 0.0
                 e_k    = rspd_now - v_meas
+  
+
+
+
+
+
   
                 # ── 3) Controller that generates u_unclamped ────────
 
