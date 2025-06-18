@@ -371,7 +371,7 @@ if __name__ == "__main__":
                 # ── 6) FF‐term ─────────────────────────────────────────────────────
                 FF_term = Kff * e_fut
 
-                # ── 7) Total output u[k], clipped to [-100, +100] ────────────────
+                # ── 7) Total output u[k], clipped to [-15, +100] ────────────────
                 u_unclamped = P_term + I_out + D_term + FF_term
                 u = float(np.clip(u_unclamped, -15.0, +100.0))
 
