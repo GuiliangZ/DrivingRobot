@@ -195,33 +195,7 @@ def veh_can_listener_thread(dbc_path: str, can_iface: str):
     bus.shutdown()
     print("[CAN⋅Thread] Exiting CAN thread.")
 
-# ───────────────────────────── GAIN‐SCHEDULING ─────────────────────────────────
-def get_gains_for_speed(ref_speed: float):
-    """
-    Return (Kp, Ki, Kd, Kff) according to the current reference speed (kph).
-
-    """
-    spd = ref_speed
-    kp_bp_spd = np.array([0,20,40,60,80,100,120,140], dtype=float)
-    kp_vals = np.array([6,7,8,9,9,10,10,10], dtype=float)
-    kp = float(np.interp(spd, kp_bp_spd, kp_vals))
-
-    ki_bp_spd = np.array([0,20,40,60,80,100,120,140], dtype=float)
-    ki_vals = np.array([1.5,1.6,1.7,1.9,2,2,2,2], dtype=float)
-    ki = float(np.interp(spd, ki_bp_spd, ki_vals))
-
-    # The baseline code doesn't use kd, - now the kd_vals are wrong and random, adjust when needed
-    kd_bp_spd = np.array([0,20,40,60,80,100,120], dtype=float)
-    kd_vals = np.array([6,7,8,9,10,10,10], dtype=float)
-    kd = float(np.interp(spd, kd_bp_spd, kd_vals))
-    kd = 0
-
-    kff_bp_spd = np.array([0,3,4,60,80,100,120,140], dtype=float)
-    kff_vals = np.array([4,4,3,3,3,3,3,3], dtype=float)
-    kff = float(np.interp(spd, kff_bp_spd, kff_vals))
-
-    return (kp, ki, kd, kff)
-
+# ──────────────────────────── USER CHOOSE CYCLE KEY ──────────────────────────────
 def choose_cycle_key(all_cycles):
     """
     Print all available cycle keys and ask the user to pick one or more.
@@ -283,6 +257,34 @@ def choose_vehicleModelName():
             return chosen
         else:
             print("  → Invalid selection. Please enter exactly one valid index or model name.\n")
+
+# ───────────────────────────── GAIN‐SCHEDULING ─────────────────────────────────
+def get_gains_for_speed(ref_speed: float):
+    """
+    Return (Kp, Ki, Kd, Kff) according to the current reference speed (kph).
+
+    """
+    spd = ref_speed
+    kp_bp_spd = np.array([0,20,40,60,80,100,120,140], dtype=float)
+    kp_vals = np.array([6,7,8,9,9,10,10,10], dtype=float)
+    kp = float(np.interp(spd, kp_bp_spd, kp_vals))
+
+    ki_bp_spd = np.array([0,20,40,60,80,100,120,140], dtype=float)
+    ki_vals = np.array([1.5,1.6,1.7,1.9,2,2,2,2], dtype=float)
+    ki = float(np.interp(spd, ki_bp_spd, ki_vals))
+
+    # The baseline code doesn't use kd, - now the kd_vals are wrong and random, adjust when needed
+    kd_bp_spd = np.array([0,20,40,60,80,100,120], dtype=float)
+    kd_vals = np.array([6,7,8,9,10,10,10], dtype=float)
+    kd = float(np.interp(spd, kd_bp_spd, kd_vals))
+    kd = 0
+
+    kff_bp_spd = np.array([0,3,4,60,80,100,120,140], dtype=float)
+    kff_vals = np.array([4,4,3,3,3,3,3,3], dtype=float)
+    kff = float(np.interp(spd, kff_bp_spd, kff_vals))
+
+    return (kp, ki, kd, kff)
+
 
 # ─────────────────────────────── MAIN CONTROL ─────────────────────────────────
 if __name__ == "__main__":
@@ -408,7 +410,8 @@ if __name__ == "__main__":
                 if elapsed_time <= ref_time[0]:
                     rspd_now = ref_speed[0]
                 elif elapsed_time >= ref_time[-1]:
-                    rspd_now = ref_speed[-1]
+                    # rspd_now = ref_speed[-1]
+                    rspd_now = 0.0
                     break
                 else:
                     rspd_now = float(np.interp(elapsed_time, ref_time, ref_speed))
@@ -417,7 +420,8 @@ if __name__ == "__main__":
                 if t_future <= ref_time[0]:
                     rspd_fut = ref_speed[0]
                 elif t_future >= ref_time[-1]:
-                    rspd_fut = ref_speed[-1]
+                    # rspd_fut = ref_speed[-1]
+                    rspd_fut = 0.0
                 else:
                     rspd_fut = float(np.interp(t_future, ref_time, ref_speed))
 
@@ -515,8 +519,7 @@ if __name__ == "__main__":
                     "Kp":        Kp,
                     "Ki":        Ki,
                     "Kd":        Kd,
-                    "Kff":       Kff
-                    
+                    "Kff":       Kff,
                 })
 
         except KeyboardInterrupt:
@@ -554,8 +557,6 @@ if __name__ == "__main__":
 
         print(f"[Main] Finish Running {cycle_key} on {veh_modelName}, take a 5 second break...")
         time.sleep(5)
-
-
 
     pca.deinit()
     print("[Main] pca board PWM signal cleaned up and exited.")
