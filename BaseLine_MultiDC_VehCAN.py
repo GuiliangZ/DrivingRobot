@@ -140,7 +140,7 @@ def dyno_can_listener_thread(dbc_path: str, can_iface: str):
         f = decoded.get('Force_N')
         if s is not None:
             if -0.1 < s < 0.1:
-                s = 0.0
+                latest_speed = int(round(s))
             else:
                 latest_speed = float(s)
         if f is not None:
@@ -176,7 +176,7 @@ def veh_can_listener_thread(dbc_path: str, can_iface: str):
 
     print(f"[CAN⋅Thread] Listening on {can_iface} for ID=0x{bms_soc_msg.frame_id:03X}…")
     while veh_can_running:
-        msg = bus.recv(timeout=1.0)
+        msg = bus.recv(timeout=3.0)
         if msg is None:
             continue
         if msg.arbitration_id != bms_soc_msg.frame_id:
@@ -188,8 +188,8 @@ def veh_can_listener_thread(dbc_path: str, can_iface: str):
 
         BMS_socMin = decoded.get('BMS_socMin')
         if BMS_socMin is not None:
-            if -0.1 < BMS_socMin < 0.1:
-                BMS_socMin = 0.0
+            if BMS_socMin <= 2:
+                BMS_socMin = int(round(BMS_socMin))
             else:
                 BMS_socMin = float(BMS_socMin)
     bus.shutdown()
@@ -315,9 +315,9 @@ if __name__ == "__main__":
 
     # ─── START CAN LISTENER THREAD ───────────────────────────────────────────────
     DYNO_DBC_PATH = '/home/guiliang/Desktop/DrivingRobot/KAVL_V3.dbc'
-    DYNO_CAN_INTERFACE = 'can0'
+    DYNO_CAN_INTERFACE = 'can1'
     VEH_DBC_PATH = '/home/guiliang/Desktop/DrivingRobot/vehBus.dbc'
-    VEH_CAN_INTERFACE = 'can1'
+    VEH_CAN_INTERFACE = 'can0'
     if dyno_can_running:
         dyno_can_thread = threading.Thread(
             target=dyno_can_listener_thread,
@@ -340,6 +340,9 @@ if __name__ == "__main__":
     # Prompt the user:
     cycle_keys = choose_cycle_key(all_cycles)
     veh_modelName = choose_vehicleModelName()
+    #Managing Vehicle SOC
+    SOC_CycleStarting = 0.0
+    SOC_Stop = 2.2
 
     # Derivative filter coefficient     # where T_f = DerivativeFilterCoeff.
     # The Simulink formula uses: D_f[k] = D_f[k-1] + (T_s / (T_s + T_f)) * (D_k - D_f[k-1])
@@ -352,7 +355,11 @@ if __name__ == "__main__":
     # Add this to regulate the rate of change of pwm output u
     max_delta = 50.0             # maximum % change per 0.01 s tick
 
-    for cycle_key in cycle_keys:
+    for idx, cycle_key in enumerate(cycle_keys):
+        if BMS_socMin <= SOC_Stop:
+            break
+        else:
+            SOC_CycleStarting = BMS_socMin
         cycle_data = all_cycles[cycle_key]
         print(f"\n[Main] Using reference cycle '{cycle_key}'")
 
@@ -391,13 +398,15 @@ if __name__ == "__main__":
         run_start      = datetime.now()
         t0             = time.time()
         next_time      = t0
-
+        current_time   = time.time()
+        now            = time.time()
         print(f"\n[Main] Starting cycle '{cycle_key}' on {veh_modelName}, duration={ref_time[-1]:.2f}s")
 
     # ─── MAIN 100 Hz CONTROL LOOP ─────────────────────────────────────────────────
         print("[Main] Entering 100 Hz control loop. Press Ctrl+C to exit.\n")
         try:
             while True:
+
                 now = time.time()
                 if now < next_time:
                     time.sleep(next_time - now)
@@ -487,12 +496,13 @@ if __name__ == "__main__":
                 # ── 9) Debug printout ─────────────────────────────────────────────
                 print(
                     f"[{elapsed_time:.3f}] "
-                    f"v_ref={rspd_now:6.2f} kph"
+                    f"v_ref={rspd_now:6.2f} kph, "
                     f"v_meas={v_meas:6.2f} kph, e={e_k:+6.2f}, e_fut={e_fut:+6.2f}, "
                     f"P={P_term:+6.2f}, I={I_out:+6.2f}, D={D_term:+6.2f}, FF={FF_term:+6.2f}, "
                     f"u={u:+6.2f}%,"
                     f"F_dyno={F_meas:6.2f} N,"
-                    f"BMS_socMin={BMS_socMin:6.2f} %"
+                    f"BMS_socMin={BMS_socMin:6.2f} %,"
+                    f"SOC_CycleStarting={SOC_CycleStarting} %"
                 )
 
                 # ── 10) Save state for next iteration ──────────────────────────────
@@ -510,6 +520,7 @@ if __name__ == "__main__":
                     "v_meas":    v_meas,
                     "u":         u,
                     "BMS_socMin":BMS_socMin,
+                    "SOC_CycleStarting":SOC_CycleStarting,
                     "error":     e_k,
                     "error_fut": e_fut,
                     "P_term":    P_term,
@@ -521,17 +532,14 @@ if __name__ == "__main__":
                     "Kd":        Kd,
                     "Kff":       Kff,
                 })
+                if BMS_socMin <= SOC_Stop:
+                    break
 
         except KeyboardInterrupt:
             print("\n[Main] KeyboardInterrupt detected. Exiting…")
 
         finally:
-            # Stop CAN thread and wait up to 1 s
-            dyno_can_running = False
-            veh_can_running = False
-            print("All CAN_Running Stops!!!")
-            dyno_can_thread.join(timeout=1.0)
-            veh_can_thread.join(timeout=1.0)
+
 
             # Zero out all PWM channels before exiting
             for ch in range(16):
@@ -546,7 +554,7 @@ if __name__ == "__main__":
                 df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
                 # Build a descriptive filename
                 timestamp_str = datetime.strftime("%m%d_%H%M")
-                excel_filename = f"DR_log_{veh_modelName}_{cycle_key}_{timestamp_str}.xlsx"
+                excel_filename = f"DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{timestamp_str}.xlsx"
                         # Ensure the subfolder exists
                 log_dir = os.path.join(base_folder, "Log_DriveRobot")
                 os.makedirs(log_dir, exist_ok=True)     
@@ -554,10 +562,19 @@ if __name__ == "__main__":
 
                 df.to_excel(excel_path, index=False)
                 print(f"[Main] Saved log to '{excel_path}' as {excel_filename}")
-
-        print(f"[Main] Finish Running {cycle_key} on {veh_modelName}, take a 5 second break...")
+        next_cycle = cycle_keys[idx+1] if idx+1 < len(cycle_keys) else None
+        remaining_cycle = cycle_keys[idx+1:]
+        print(f"[Main] Finish Running {cycle_key} on {veh_modelName}, Next running cycle {next_cycle}, take a 5 second break...")
+        print(f"Current SOC: {BMS_socMin}%, system will stop at SOC: {SOC_Stop}% ")
+        print(f"[Main] Plan to run the following cycles: {remaining_cycle}")
         time.sleep(5)
 
+    # Stop CAN thread and wait up to 1 s
+    dyno_can_running = False
+    veh_can_running = False
+    print("All CAN_Running Stops!!!")
+    dyno_can_thread.join(timeout=1.0)
+    veh_can_thread.join(timeout=1.0)
     pca.deinit()
     print("[Main] pca board PWM signal cleaned up and exited.")
     print("[Main] Cleaned up and exited.")

@@ -244,6 +244,216 @@ def choose_vehicleModelName():
 
 # ────────────────────────── GRU MODEL & MPC SETUP ───────────────────────────────
 # ------- GRU Model struture - need to updated with the newly trained model -------
+# class DeepGRURegressor0527(nn.Module):
+#     def __init__(
+#         self,
+#         input_size: int = 1,
+#         hidden_size: int = 64,
+#         num_layers: int = 6,
+#         dropout: float = 0.3,
+#         bidirectional: bool = False,
+#         fc_hidden_dims: list[int] = [512, 256, 64, 32, 32]
+#     ):
+
+#         super().__init__()
+#         self.bidirectional = bidirectional
+#         self.gru = nn.GRU(
+#             input_size=input_size,
+#             hidden_size=hidden_size,
+#             num_layers=num_layers,
+#             batch_first=True,
+#             dropout=dropout if num_layers > 1 else 0.0,
+#             bidirectional=bidirectional,
+#         )
+#         self.gru_cell = torch.nn.GRUCell(input_size, hidden_size)
+        
+
+#         # Determine the input dimension to the first FC layer
+#         fc_in_dim = hidden_size * (2 if bidirectional else 1)
+
+#         # Build MLP head
+#         layers = []
+#         for h_dim in fc_hidden_dims:
+#             layers += [
+#                 nn.Linear(fc_in_dim, h_dim),
+#                 nn.ReLU(inplace=True),
+#                 nn.Dropout(dropout),
+#             ]
+#             fc_in_dim = h_dim
+#         layers.append(nn.Linear(fc_in_dim, 1))
+
+#         self.fc = nn.Sequential(*layers)
+
+#     def forward(self, x: torch.Tensor, hidden:torch.Tensor = None ) -> tuple[torch.Tensor, torch.Tensor]:
+
+#         if isinstance(x, list) and isinstance(x[0], ca.MX):
+#             # x = [ MX(batch, input_size) for _ in range(seq_len) ]
+#             batch, input_size = x[0].size()       # MX.size() still works
+#             seq_len = len(x)
+
+#             # 1) horizontally cat all timesteps into (batch, seq_len*input_size)
+#             flat = ca.horzcat(*[ ca.reshape(xi, batch, input_size) for xi in x ])
+#             # 2) reshape back into 3D (batch, seq_len, input_size)
+#             x = ca.reshape(flat, batch, seq_len, input_size)
+
+#         # now both branches have x as a "3D Tensor" (either torch.Tensor or MX)
+#         B, T, D = x.size()    # MX.size() works too
+#         out,_ = self.gru(x)
+#         y_seq = self.fc(out)         # (B, seq_len, 1)
+#         y_seq = y_seq.squeeze(-1)    # (B, seq_len)
+#         return y_seq, hidden
+# def sync_cells_from_gru(model):
+#     nl = model.num_layers
+#     nd = model.num_directions  # 1 or 2
+#     for layer in range(nl):
+#         # these are the tensors in the trained nn.GRU
+#         wi = getattr(model.gru, f'weight_ih_l{layer}')
+#         wh = getattr(model.gru, f'weight_hh_l{layer}')
+#         bi = getattr(model.gru, f'bias_ih_l{layer}')
+#         bh = getattr(model.gru, f'bias_hh_l{layer}')
+
+#         for d in range(nd):
+#             idx = layer*nd + d
+#             cell = model.gru_cells[idx]
+#             cell.weight_ih.data.copy_(wi)
+#             cell.weight_hh.data.copy_(wh)
+#             cell.bias_ih.data.copy_(bi)
+#             cell.bias_hh.data.copy_(bh)
+
+# class DeepGRURegressor0527(nn.Module):
+#     def __init__(
+#         self,
+#         input_size: int = 1,
+#         hidden_size: int = 64,
+#         num_layers: int = 6,
+#         dropout: float = 0.3,
+#         bidirectional: bool = False,
+#         fc_hidden_dims: list[int] = [512, 256, 64, 32, 32]
+#     ):
+#         super().__init__()
+#         self.input_size   = input_size
+#         self.hidden_size  = hidden_size
+#         self.num_layers   = num_layers
+#         self.bidirectional= bidirectional
+#         self.num_directions = 2 if bidirectional else 1
+
+#         # -- standard GRU for torch.Tensor inputs --
+#         self.gru = nn.GRU(
+#             input_size=input_size,
+#             hidden_size=hidden_size,
+#             num_layers=num_layers,
+#             batch_first=True,
+#             dropout=(dropout if num_layers > 1 else 0.0),
+#             bidirectional=bidirectional,
+#         )
+
+#         # -- one GRUCell per layer & direction for MX unrolling --
+#         cell_input_sizes = [input_size] + \
+#             [hidden_size * self.num_directions] * (num_layers-1)
+#         self.gru_cells = nn.ModuleList()
+#         for inp_dim in cell_input_sizes:
+#             for _ in range(self.num_directions):
+#                 self.gru_cells.append(nn.GRUCell(inp_dim, hidden_size))
+
+#         # -- build the same FC head --
+#         fc_in_dim = hidden_size * self.num_directions
+#         layers = []
+#         for h_dim in fc_hidden_dims:
+#             layers += [
+#                 nn.Linear(fc_in_dim, h_dim),
+#                 nn.ReLU(inplace=True),
+#                 nn.Dropout(dropout),
+#             ]
+#             fc_in_dim = h_dim
+#         layers.append(nn.Linear(fc_in_dim, 1))
+#         self.fc = nn.Sequential(*layers)
+
+#     def forward(self, x, hidden=None):
+#         # ── CasADi MX path: x is a list of MX(batch,input_size) ──────────────
+#         if isinstance(x, list) and isinstance(x[0], ca.MX):
+#             B = x[0].size(1)        # batch
+#             T = len(x)              # seq_len
+
+#             # initialize hidden states as zeros if not provided
+#             if hidden is None:
+#                 # casadi: start from zeros
+#                 h_list = [
+#                     ca.MX.zeros(B, self.hidden_size)
+#                     for _ in range(self.num_layers * self.num_directions)
+#                 ]
+
+#             elif isinstance(hidden, list) and isinstance(hidden[0], ca.MX):
+#                 # casadi: adapter already gave you a list of MX for each layer
+#                 h_list = hidden
+
+#             # elif isinstance(hidden, ca.MX):
+#             #     # torch path (unlikely here), or single MX you need to unpack
+#             #     L = self.num_layers * self.num_directions
+#             #     flat_h = ca.reshape(hidden, L, B * self.hidden_size)  # 2-D reshape
+#             #     h_list = [
+#             #         ca.reshape(flat_h[i, :], self.hidden_size, B)
+#             #         for i in range(L)
+#             #     ]
+#             elif isinstance(hidden, ca.MX):
+#                 # hidden is an MX of shape (L, B, H)
+#                 L = self.num_layers * self.num_directions
+#                 # slice out each (B×H) layer without any reshape
+#                 h_list = [ hidden[i, :, :] for i in range(L) ]
+#             else:
+#                 raise TypeError(f"Unexpected hidden type {type(hidden)}")
+
+#             outputs = []
+#             # unroll each timestep
+#             for xi in x:   # xi: MX(B, input_size)
+#                 inp = xi
+#                 next_h = []
+#                 cell_idx = 0
+
+#                 # loop over layers
+#                 for layer in range(self.num_layers):
+#                     # for each direction
+#                     dir_h = []
+#                     for d in range(self.num_directions):
+#                         h_prev = h_list[cell_idx]
+#                         h_new  = self.gru_cells[cell_idx](inp, h_prev)
+#                         dir_h.append(h_new)
+#                         cell_idx += 1
+#                     # if bidirectional, you’d have to run reverse pass too;
+#                     # here we assume unidirectional for CasADi
+#                     # and just concatenate the forward outputs
+#                     inp = dir_h[0] if self.num_directions == 1 else ca.vertcat(*dir_h)
+#                     next_h += dir_h
+
+#                 h_list = next_h
+#                 # run MLP head on the last layer’s output
+#                 y_t = self.fc(inp)           # MX(B,1)
+#                 outputs.append(y_t)
+
+#             # build y_seq: stack T outputs into MX of shape (B, T)
+#             # first vertcat into a (B*T,1) column
+#             flat_y = ca.vertcat(*[
+#                 ca.reshape(o, B, 1) for o in outputs
+#             ])
+#             # then reshape into 2D (B, T)
+#             y_seq = ca.reshape(flat_y, B, T)
+
+#             # also pack h_list back into one MX tensor of shape (L, B, H)
+#             flat_h = ca.vertcat(*[
+#                 ca.reshape(h_i, 1, B*self.hidden_size) for h_i in h_list
+#             ])  # size (L, B*H)
+#             S = ca.Sparsity.dense([self.num_layers * self.num_directions,
+#                        B,
+#                        self.hidden_size])
+#             hidden_out = ca.reshape(flat_h, S)
+
+#             return y_seq, hidden_out
+
+#         # ── PyTorch path: x is a Tensor(B, T, D) ────────────────────────────
+#         else:
+#             out, h_out = self.gru(x, hidden)
+#             y_seq = self.fc(out).squeeze(-1)  # → Tensor(B, T)
+#             return y_seq, h_out
+
 class DeepGRURegressor0527(nn.Module):
     def __init__(
         self,
@@ -293,7 +503,7 @@ class DeepGRURegressor0527(nn.Module):
 
         self.fc = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor, hidden:torch.Tensor = None ) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x, hidden=None):
         """
         Forward pass.
         Args:
@@ -303,33 +513,87 @@ class DeepGRURegressor0527(nn.Module):
             hidden: (num_layers, batch, hidden_size) or None
         """
         # GRU returns: output (batch, seq_len, num_directions*hidden_size), h_n
-        B = x.size(0)
-        if hidden is not None and hidden.size(1) == B:
-            hidden = hidden.detach()
-        else:
-            hidden = None
-        out,_ = self.gru(x)
+        
+        # if torch.is_tensor(x):
+        #     B = x.size(0)
+        # else:
+        #     B = x.size(1)   # casadi.MX batch dim
+        # if hidden is not None and hidden.size(1) == B:
+        #     hidden = hidden.detach()
+        # else:
+        #     hidden = None
+
+        # if isinstance(x, list):
+        #     # x is probably something like [[…], […], …]
+        #     x = torch.tensor(x, dtype=torch.float32,
+        #                     device=next(self.parameters()).device)
+        # if hidden is not None and isinstance(hidden, list):
+        #     hidden = torch.tensor(hidden, dtype=torch.float32,
+        #                         device=next(self.parameters()).device)
+        breakpoint()
+        out,_ = self.gru(x[0],hidden)
+        breakpoint()
         y_seq = self.fc(out)         # (B, seq_len, 1)
         y_seq = y_seq.squeeze(-1)    # (B, seq_len)
         return y_seq, hidden
 
+
 # ------- Acados based real-time MPC ----------------
 class MPC:
-    def __init__(self, acados_model, MPC_horizon, Q, R, N, decay_rate_ref):
+    def __init__(self, model_gru, MPC_horizon, Q, R, N, Ts, decay_rate_ref):
         self.MPC_horizon = MPC_horizon
-        self.model = acados_model
+        self.model_gru = model_gru
         self.Q = Q
         self.R = R
         self.N = N
+        self.Ts = Ts
         self.decay_rate_ref = decay_rate_ref
+        # self.model_CasADi = l4c.realtime.RealTimeL4CasADi(self.model_gru, approximation_order=2)
+        # self.model_CasADi = l4c.L4CasADi(self.model_gru,  batched=True, device='cpu')
         # self.solver_option = solver_option
         self._make_ocp()
         self._make_solver()
 
     def _make_ocp(self):
+        batch_size  = 1
+        seq_len     = 50                               # one time‐step per call
+        input_size  = self.model_gru.gru.input_size        # e.g. 1 if you’re feeding in scalar duty-cycle
+        hidden_size = self.model_gru.gru.hidden_size       # e.g. 64 or whatever you trained with
+        num_layers  = self.model_gru.gru.num_layers  
+        # print(f"input_size{input_size}, hidden_size{hidden_size}, num_layers{num_layers}")
+        model_CasADi = l4c.realtime.RealTimeL4CasADi(self.model_gru, approximation_order=2)
+        
+        
+        # x_sym      = ca.MX.sym("x",  batch_size, seq_len, input_size)    #   x ≡ your sequence input  shape (batch, seq_len, input_size)
+        # hidden_sym = ca.MX.sym("h0", num_layers, batch_size, hidden_size)    #   h0 ≡ your initial hidden state shape (num_layers, batch, hidden_size)
+        # casadi_model = self.model_CasADi.model(x_sym, hidden_sym)
+        # casadi_model = self.model_CasADi.model()
+        
+
+        u_sym   = ca.MX.sym('u',   batch_size, seq_len, input_size)      # your control / input
+        h_sym   = ca.MX.sym('h',   num_layers, batch_size, hidden_size) # your hidden state
+        # single‐step call: returns (y_seq, h_next)
+        _, h_next = model_CasADi.model(u_sym, h_sym)
+
+        # ─── 2) Create an AcadosModel with discrete dynamics ──────────────────────────
+        casadi_model = AcadosModel()
+        casadi_model.name = 'gru_ocp'
+        # states and controls
+        casadi_model.x   = h_sym              # hidden state is your “x”
+        casadi_model.u   = u_sym              # input is your “u”
+        casadi_model.z   = []                 # no algebraic states
+        # discrete‐time update
+        casadi_model.f_impl_expr = None       # we’re not using implicit integrator here
+        casadi_model.f_expl_expr = h_next     # h_{k+1} = h_next(u_k, h_k)
+
+
+
+        # Directly assign the wraped model
         ocp = AcadosOcp()
-        ocp.model = self.model
+        ocp.model = casadi_model
         ocp.dims.N = self.MPC_horizon
+        ocp.model.T = self.Ts
+        ocp.model.name = "gru_mpc"
 
         # quadratic cost using Linear least square
         ocp.cost.cost_type = "LINEAR_LS"
@@ -359,8 +623,11 @@ class MPC:
     def _make_solver(self):
         # generate & compile once
         self.ocp.code_export_directory = 'acados_ocp_deeprnn'
-        self.ocp.generate_code()
-        self.ocp.compile()
+        solver = AcadosOcpSolver(self.ocp, json_file=None, generate=False, build=False)
+        solver.generate()
+        solver.build()
+        # self.ocp.generate_code()
+        # self.ocp.compile()
         jsonf = os.path.join(self.ocp.code_export_directory,
                               f'acados_ocp_{self.model.name}.json')
         self.solver = AcadosOcpSolver(self.ocp, json_file = jsonf)
@@ -388,7 +655,6 @@ class MPC:
         status = self.solver.solve()
         if status != 0:
             print("Warning: acados returned status", status)
-        
         return self.solver.get(0, 'u') # only use the first control among a series of solved control 
 
 # ─────────────────────────────── MAIN CONTROL ─────────────────────────────────
@@ -438,32 +704,6 @@ if __name__ == "__main__":
         )
         veh_can_thread.start()
 
-    # ─── MPC SETUP ───────────────────────────────────────────────  
-    MPC_horizon = 10        # MPC horizon
-    Q = 10.0                # penalize speed error
-    R = 1.0                 # penalize control effort
-    decay_rate_ref = 0.99   # currently not using
-    # -------- Load the previously trained GRU model --------------------------------------
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    save_path = os.path.join("neuralMPC/save", "gru_regressor_0527.pth")
-    model_gru = DeepGRURegressor0527()                                      # 1) re-create the model with the same architecture
-    state_dict = torch.load(save_path, map_location=device, weights_only=True,)
-    model_gru.load_state_dict(state_dict)   # 2) load weights   
-    model_gru.to("cpu").eval() # casadi only works on CPU tensors not on GPU
-    print("Model reloaded and ready for inference on", device)
-    batch       = 1
-    seq_len     = 1                               # one time‐step per call
-    input_size  = model_gru.gru.input_size        # e.g. 1 if you’re feeding in scalar duty-cycle
-    hidden_size = model_gru.gru.hidden_size       # e.g. 64 or whatever you trained with
-    num_layers  = model_gru.gru.num_layers  
-
-    u_sym      = ca.MX.sym("x",  batch, seq_len, input_size)    #   x ≡ your sequence input  shape (batch, seq_len, input_size)
-    hidden_sym = ca.MX.sym("h0", num_layers, batch, hidden_size)    #   h0 ≡ your initial hidden state shape (num_layers, batch, hidden_size)
-    model_CasADi = l4c.realtime.RealTimeL4CasADi(model_gru, approximation_order=2)
-    # casadi_model = model_CasADi.model(u_sym, hidden_sym)
-    casadi_model = model_CasADi.model()
-    mpc = MPC(model=casadi_model, MPC_horizon=MPC_horizon, Q=Q, R=R, N=MPC_horizon, decay_rate_ref=decay_rate_ref) # Setup the solver for MPC 
-    
     # ─── PARAMETERS SETUP ───────────────────────────────────────────────  
     # Load reference cycle from .mat(s)
     base_folder = ""
@@ -477,6 +717,23 @@ if __name__ == "__main__":
     # Add this to regulate the rate of change of pwm output u
     max_delta = 30.0             # maximum % change per 0.01 s tick
     max_speed = 140.0
+
+    # ─── MPC SETUP ───────────────────────────────────────────────  
+    MPC_horizon = 10        # MPC horizon
+    Q = 10.0                # penalize speed error
+    R = 1.0                 # penalize control effort
+    decay_rate_ref = 0.99   # currently not using
+    # -------- Load the previously trained GRU model --------------------------------------
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    save_path = os.path.join("neuralMPC/save", "gru_regressor_0527.pth")
+    model_gru = DeepGRURegressor0527()                                      # 1) re-create the model with the same architecture
+    state_dict = torch.load(save_path, map_location=device, weights_only=True,)
+    model_gru.load_state_dict(state_dict, strict=False)   # 2) load weights   
+    model_gru.to("cpu").eval() # casadi only works on CPU tensors not on GPU
+    print("Model reloaded and ready for inference on", device)
+    mpc = MPC(model_gru=model_gru, MPC_horizon=MPC_horizon, Q=Q, R=R, N=MPC_horizon, Ts=Ts, decay_rate_ref=decay_rate_ref) # Setup the solver for MPC 
+    
+
 
     for cycle_key in cycle_keys:
         cycle_data = all_cycles[cycle_key]
@@ -500,7 +757,7 @@ if __name__ == "__main__":
         print(f"[Main] Reference loaded: shape = {ref_array.shape}")
 
         # Prepare logging
-        log_data       = []
+        log_data  = []
         times_mpc = []
         # Record loop‐start time so we can log elapsed time from 0.0
         run_start      = datetime.now()
