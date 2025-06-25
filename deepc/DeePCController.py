@@ -66,31 +66,30 @@ if __name__ == "__main__":
     lambda_u = 0                # u regularizer
     u_dim = 1                                   # the dimension of control inputs - DR case: 1 - PWM input
     y_dim = 1                                   # the dimension of controlled outputs - DR case: 1 -Dyno speed output
-    Q = np.array([],[])                         # the weighting matrix of controlled outputs y
-    R = np.array([],[])                         # the weighting matrix of control inputs u
-    ineqconidx = {'u': [0]}                     # specify the wanted constraints for u and y
-    ineqconbd={'lbu': [], 'ubu': []}            # specify the bounds for u and y
-    us = None                                   # set-point of u;  size (1, u_dim), if sp_change=False, can just define us, ys
-    ys = None                                   # set-point of y;  size (1, y_dim), if sp_change=False, can just define us, ys
+    Q = np.diag(np.tile(1, THorizon))           # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
+    R = np.diag(np.tile(1, THorizon))           # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
+    ineqconidx = {'u': [0], 'y':[0]}                                            # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
+    ineqconbd={'lbu': np.array([-15]), 'ubu': ([100]),
+               'lby': np.array([0]), 'uby': np.array([140])}                    # specify the bounds for u and y
 
     if os.path.isfile(CACHE_FILE):
         npz = np.load(CACHE_FILE)
-        Up, Uf, Yp, Yf = npz['Up'], npz['Uf'], npz['Yp'], npz['Yf']
+        ud, yd = npz['ud'], npz['yd']
     ud, yd = load_timeseries(DATA_DIR)          # history data collected offline to construct Hankel matrix; size (T, ud/yd)
     T = ud.shape[0]                             # the length of offline collected data
-
+    np.savez(CACHE_FILE, ud=ud, yd=yd)
     # init deepc tools
-    dpc_args = [u_dim, y_dim, T, Tini, THorizon, np.array([ys]), ud, yd, Q, R]
-    dpc_kwargs = dict(us=np.array([us]),
-                      lambda_g=lambda_g,
+    dpc_args = [u_dim, y_dim, T, Tini, THorizon, ud, yd, Q, R]
+    dpc_kwargs = dict(lambda_g=lambda_g,
                       lambda_y=lambda_y,
+                      sp_change=True,
                       ineqconidx=ineqconidx,
                       ineqconbd=ineqconbd
                       )
     dpc = dpc.deepctools(*dpc_args, **dpc_kwargs)
 
     # init and formulate deepc solver
-    dpc_opts = {
+    dpc_opts = {                            # cs.nlpsol solver parameters
         'ipopt.max_iter': 100,  # 50
         'ipopt.tol': 1e-5,
         'ipopt.print_level': 1,
@@ -100,6 +99,8 @@ if __name__ == "__main__":
     }
 
     dpc.init_DeePCAcadosSolver(pts=dpc_opts)
+    # dpc.init_DeePCsolver(pts=dpc_opts)            # Those solver are available as part of the deepctools, but may be slower than DeePCAcados for real time application
+    # dpc.init_RDeePCsolver(pts=dpc_opts)
 
     # ─── PCA9685 PWM SETUP ──────────────────────────────────────────────────────
     # i2c = busio.I2C(board.SCL, board.SDA)
@@ -195,8 +196,6 @@ if __name__ == "__main__":
         now            = time.time()
         print(f"\n[Main] Starting cycle '{cycle_key}' on {veh_modelName}, duration={ref_time[-1]:.2f}s")
 
-        
-        
     # ─── MAIN 100 Hz CONTROL LOOP ─────────────────────────────────────────────────
         print("[Main] Entering 100 Hz control loop. Press Ctrl+C to exit.\n")
         try:
@@ -206,7 +205,7 @@ if __name__ == "__main__":
                     time.sleep(next_time - now)
                 elapsed_time = now - next_time                 # Compute elapsed time since loop start
 
-                # ── 1) Interpolate reference speed at t and t+Ts ───────────────────
+                # ── Interpolate reference speed at t and t+Ts ───────────────────
                 if elapsed_time <= ref_time[0]:
                     rspd_now = ref_speed[0]
                 elif elapsed_time >= ref_time[-1]:
@@ -214,7 +213,8 @@ if __name__ == "__main__":
                     break
                 else:
                     rspd_now = float(np.interp(elapsed_time, ref_time, ref_speed))
-                
+                    
+                # -- Interpolate reference speed for DeePC ref_horizon_speed -------------------------
                 t_future = elapsed_time + Ts * np.arange(THorizon)      # look 0.01 * THorizon s ahead of time
                 if t_future[-1] >= ref_time[-1]:                        # if the last future time is beyond your reference horizon...
                     valid_mask = t_future <= ref_time[-1]               # build a boolean mask of all valid future times
@@ -223,7 +223,7 @@ if __name__ == "__main__":
                 ref_horizon_speed = np.interp(t_future, ref_time, ref_speed)
                 ref_horizon_speed = ref_horizon_speed.reshape(-1, 1)
                 
-                # ── 2) Compute current error e[k] and future error e_fut[k] ────────
+                # ── Compute current error e[k] and future error e_fut[k] ────────
                 v_meas = latest_speed if latest_speed is not None else 0.0
                 F_meas = latest_force if latest_force is not None else 0.0
                 e_k    = rspd_now - v_meas
@@ -231,23 +231,17 @@ if __name__ == "__main__":
                 # ── Implementing real time acados based solver for DeePC ────────
                 u_opt, g_opt, t_deepc = dpc.solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed)         #Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
 
-
-                # ── 7) Total output u[k], clipped to [-15, +100] ────────────────
-                u_unclamped = u_opt[0]
+                # ──  Add a vehicle speed limiter safety feature (Theoretically don't need this part because all the control contraints are baked in the DeePC formulation) ────────
+                u_unclamped = u_opt[0]# Total output u[k], clipped to [-15, +100] 
                 u = float(np.clip(u_unclamped, -15.0, +100.0))
-
-                # Add a vehicle speed limiter safety feature
-                # ── 7a) Rate‐of‐change limiting on u ──────────────────────────────
-                # Allow u to move by at most ±max_delta from the previous cycle:
                 lower_bound = u_prev - max_delta
-                upper_bound = u_prev + max_delta
-                u = float(np.clip(u, lower_bound, upper_bound))
-
-                # enforce a vehicle speed limiter safety
-                if latest_speed is not None and latest_speed >= 140.0:
+                upper_bound = u_prev + max_delta                        # Allow u to move by at most ±max_delta from the previous cycle:
+                u = float(np.clip(u, lower_bound, upper_bound))         # Rate‐of‐change limiting on u
+                if latest_speed is not None and latest_speed >= 140.0:  # enforce a vehicle speed limiter safety
                     u = 0.0
+                    break
 
-                # ── 8) Send PWM to PCA9685: accel (ch=0) if u>=0, else brake (ch=4) ──
+                # ──  Send PWM to PCA9685: accel (ch=0) if u>=0, else brake (ch=4) ──
                 if u >= 0.0:
                     set_duty(4, 0.0)            # ensure brake channel is zero
                     set_duty(0, u)              # channel 0 = accelerator
@@ -255,7 +249,7 @@ if __name__ == "__main__":
                     set_duty(0, 0.0)            # ensure accel channel is zero
                     set_duty(4, -u)             # channel 4 = brake
 
-                # ── 9) Debug printout ─────────────────────────────────────────────
+                # ──  Debug printout ─────────────────────────────────────────────
                 print(
                     f"[{elapsed_time:.3f}] "
                     f"v_ref={rspd_now:6.2f} kph, "

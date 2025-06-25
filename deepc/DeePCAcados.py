@@ -227,6 +227,7 @@ class deepctools():
         
         self.parameters = ctools.struct_symSX(parameters)
 
+
     def _init_ineq_cons(self, ineqconidx=None, ineqconbd=None):
         """
             Obtain Hankel matrix that used for the inequality constrained variables
@@ -310,6 +311,11 @@ class deepctools():
         ocp.constraints.idxbx = np.arange(neq)    # equality: lb = ub
         ocp.constraints.lbx = np.zeros(neq)
         ocp.constraints.ubx = np.zeros(neq)
+
+        ocp.constraints.C   = Hc
+        ocp.constraints.lc  = lbc
+        ocp.constraints.uc  = ubc
+
 
         # 8) ineq constraints
         if ineq_flag:
