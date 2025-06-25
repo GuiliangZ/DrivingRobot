@@ -29,89 +29,6 @@ import can
 import casadi as ca
 from acados_template import AcadosOcp, AcadosOcpSolver
 
-# ─────────────────────────── LOAD Data for DeePC ────────────────────────────
-class MultiSheetTimeSeriesDataset(Dataset):
-    def __init__(self, xlsx_file, seq_len, normalize=False, cache_path=None):
-        """
-        Reads every sheet in xlsx_file (all assumed to have columns
-        ['Adj_Time','Duty_Cyc','DynoSpeed_kph']), then builds sliding windows.
-        """
-        if cache_path and os.path.exists(cache_path):
-            data = np.load(cache_path)
-            self.X = data["X"]
-            self.y = data["y"]
-            self.X_mean = data["X_mean"]
-            self.X_std = data["X_std"]
-            self.y_mean = data["y_mean"]
-            self.y_std = data["y_std"]
-            print(f"Loaded from cache: {cache_path}")
-            return
-        # Read all sheets into a dict of DataFrames
-        sheets = pd.read_excel(xlsx_file, sheet_name=None)  # requires openpyxl
-        
-        self.seq_len = seq_len
-        X_windows = []
-        y_windows  = []
-        print("Start loading data...")
-        for name, df in sheets.items():
-             # -- drop ALL rows with duplicate Adj_Time --
-            df = df[df['Adj_Time'].ne(df['Adj_Time'].shift())].reset_index(drop=True)
-            pwm = df['Duty_Cyc'].to_numpy(dtype=np.float32)
-            vel = df['DynoSpeed_kph'].to_numpy(dtype=np.float32)
-            
-            # for each sheet, build its own sliding windows
-            for i in range(len(pwm) - seq_len):
-                X_windows.append(pwm[i : i + seq_len])
-                y_windows.append(vel[i : i + seq_len])
-            print(f"DataSheetName: {name},  pwm shape: {pwm.shape} vel shape: {vel.shape}")
-        
-        # stack into arrays
-        self.X = np.stack(X_windows)    # shape [N_total, seq_len]
-        self.y = np.stack(y_windows)    # shape [N_total]
-        print(f"[MultiSheetTimeSeriesDataset] X shape: {self.X.shape}, y shape: {self.y.shape}")
-
-         # compute and apply normalization if requested
-        if normalize:
-            # feature-wise global stats
-            self.X_mean = self.X.mean()
-            self.X_std  = self.X.std()
-            self.y_mean = self.y.mean()
-            self.y_std  = self.y.std()
-
-            # standardize
-            self.X = (self.X - self.X_mean) / self.X_std
-            self.y = (self.y - self.y_mean) / self.y_std
-
-        else:
-            # placeholders if not normalized
-            self.X_mean = 0.0; self.X_std = 1.0
-            self.y_mean = 0.0; self.y_std = 1.0
-
-        # after building self.X, self.y:
-        if cache_path:
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            np.savez_compressed(cache_path, X=self.X, y=self.y, X_mean = self.X_mean, X_std = self.X_std,
-                                 y_mean=self.y_mean, y_std=self.y_std)
-            print(f"Saved cache → {cache_path}")
-
-    def __len__(self):
-        return len(self.y)
-
-    def __getitem__(self, idx):
-        # x is still a full window
-        x = torch.tensor(self.X[idx], dtype=torch.float32).unsqueeze(-1)  # [seq_len,1]
-        y = torch.from_numpy(self.y[idx])                 # now [seq_len]
-
-        return x, y
-    
-    def inverse_target(self, y_norm):
-        """Convert a normalized target back to original units."""
-        return y_norm * self.y_std + self.y_mean
-
-    def inverse_input(self, X_norm):
-        """Convert normalized inputs back to original scale."""
-        return X_norm * self.X_std + self.X_mean
-
 # ─────────────────────────── LOAD DRIVE-CYCLE .MAT ────────────────────────────
 def load_drivecycle_mat_files(base_folder: str):
     """
@@ -141,13 +58,35 @@ def load_drivecycle_mat_files(base_folder: str):
 
     return mat_data
 
+# ─────────────────────────── LOAD TIME SERIES input-output data for building Hankel matrix ────────────────────────────
+def load_timeseries(data_dir):
+    """
+    Read every .xlsx in data_dir, concatenating their 'u' and 'v_meas' columns.
+    Returns
+    -------
+    u : np.ndarray, shape (T_total,)
+    v : np.ndarray, shape (T_total,)
+    """
+    u_list, v_list = [], []
+    for fname in sorted(os.listdir(data_dir)):
+        if not fname.endswith('.xlsx'):
+            continue
+        df = pd.read_excel(os.path.join(data_dir, fname))
+        u_list.append(df['u'].values)
+        v_list.append(df['v_meas'].values)
+    u = np.concatenate(u_list, axis=0)
+    v = np.concatenate(v_list, axis=0)
+    ud = u.reshape(-1, 1)
+    yd = v.reshape(-1, 1)
+    return ud, yd
+
 # ──────────────────────────── CAN LISTENER THREAD ──────────────────────────────
-def can_listener_thread(dbc_path: str, can_iface: str):
+def dyno_can_listener_thread(dbc_path: str, can_iface: str):
     """
     Runs in a background thread. Listens for 'Speed_and_Force' on can_iface,
     decodes it using KAVL_V3.dbc, and updates globals latest_speed & latest_force.
     """
-    global latest_speed, latest_force, can_running
+    global latest_speed, latest_force, dyno_can_running
 
     try:
         db = cantools.database.load_file(dbc_path)
@@ -168,7 +107,7 @@ def can_listener_thread(dbc_path: str, can_iface: str):
         return
 
     print(f"[CAN⋅Thread] Listening on {can_iface} for ID=0x{speed_force_msg.frame_id:03X}…")
-    while can_running:
+    while dyno_can_running:
         msg = bus.recv(timeout=1.0)
         if msg is None:
             continue
@@ -183,12 +122,58 @@ def can_listener_thread(dbc_path: str, can_iface: str):
         f = decoded.get('Force_N')
         if s is not None:
             if -0.1 < s < 0.1:
-                s = 0.0
+                latest_speed = int(round(s))
             else:
                 latest_speed = float(s)
         if f is not None:
             latest_force = float(f)
 
+    bus.shutdown()
+    print("[CAN⋅Thread] Exiting CAN thread.")
+
+def veh_can_listener_thread(dbc_path: str, can_iface: str):
+    """
+    Runs in a background thread. Listens for 'BMS_socMin' on can_iface,
+    decodes it using vehBus.dbc, and updates globals BMS_socMin.
+    """
+    global BMS_socMin, veh_can_running
+
+    try:
+        db = cantools.database.load_file(dbc_path)
+    except FileNotFoundError:
+        print(f"[CAN⋅Thread] ERROR: Cannot find DBC at '{dbc_path}'. Exiting CAN thread.")
+        return
+
+    try:
+        bms_soc_msg = db.get_message_by_name('BMS_socStatus')
+    except KeyError:
+        print("[CAN⋅Thread] ERROR: 'BMS_socStatus' not found in DBC. Exiting CAN thread.")
+        return
+
+    try:
+        bus = can.interface.Bus(channel=can_iface, interface='socketcan')
+    except OSError:
+        print(f"[CAN⋅Thread] ERROR: Cannot open CAN interface '{can_iface}'. Exiting CAN thread.")
+        return
+
+    print(f"[CAN⋅Thread] Listening on {can_iface} for ID=0x{bms_soc_msg.frame_id:03X}…")
+    while veh_can_running:
+        msg = bus.recv(timeout=3.0)
+        if msg is None:
+            continue
+        if msg.arbitration_id != bms_soc_msg.frame_id:
+            continue
+        try:
+            decoded = db.decode_message(msg.arbitration_id, msg.data)
+        except KeyError:
+            continue
+
+        BMS_socMin = decoded.get('BMS_socMin')
+        if BMS_socMin is not None:
+            if BMS_socMin <= 2:
+                BMS_socMin = int(round(BMS_socMin))
+            else:
+                BMS_socMin = float(BMS_socMin)
     bus.shutdown()
     print("[CAN⋅Thread] Exiting CAN thread.")
 
@@ -225,4 +210,60 @@ def choose_cycle_key(all_cycles):
             return cycle_keys
         else:
             print("  → No valid selection detected. Please try again.\n")
+
+def choose_vehicleModelName():
+    """
+    Print all available Tesla vehicle models ans ask the user to pick one for logging purpose.
+    Keeps prompting until one and only one valid key is selected.
+    Available vehicle models are: Model S,X,3,Y,Truck,Taxi
+    Returns a string of vehicle model name
+    """
+    models = ["Model_S", "Model_X", "Model_3", "Model_Y", "Truck", "Taxi"]
+    while True:
+        print("\n Available vehicle models:")
+        for idx, m in enumerate(models, start=1):
+            print(f"[{idx}] {m}")
+        sel = input("Select one model [index or name(case sensitive)]: ").strip()
+        chosen = None
+
+        if sel.isdigit():
+            i = int(sel) - 1
+            if 0 <= i <len(models):
+                chosen = models[i]
+        else:
+            for m in models:
+                if sel.lower() == m.lower():
+                    chosen = m
+                    break
+        if chosen:
+            return chosen
+        else:
+            print("  → Invalid selection. Please enter exactly one valid index or model name.\n")
+
+# ───────────────────────────── GAIN‐SCHEDULING ─────────────────────────────────
+def get_gains_for_speed(ref_speed: float):
+    """
+    Return (Kp, Ki, Kd, Kff) according to the current reference speed (kph).
+
+    """
+    spd = ref_speed
+    kp_bp_spd = np.array([0,20,40,60,80,100,120,140], dtype=float)
+    kp_vals = np.array([6,7,8,9,9,10,10,10], dtype=float)
+    kp = float(np.interp(spd, kp_bp_spd, kp_vals))
+
+    ki_bp_spd = np.array([0,20,40,60,80,100,120,140], dtype=float)
+    ki_vals = np.array([1.5,1.6,1.7,1.9,2,2,2,2], dtype=float)
+    ki = float(np.interp(spd, ki_bp_spd, ki_vals))
+
+    # The baseline code doesn't use kd, - now the kd_vals are wrong and random, adjust when needed
+    kd_bp_spd = np.array([0,20,40,60,80,100,120], dtype=float)
+    kd_vals = np.array([6,7,8,9,10,10,10], dtype=float)
+    kd = float(np.interp(spd, kd_bp_spd, kd_vals))
+    kd = 0
+
+    kff_bp_spd = np.array([0,3,4,60,80,100,120,140], dtype=float)
+    kff_vals = np.array([4,4,3,3,3,3,3,3], dtype=float)
+    kff = float(np.interp(spd, kff_bp_spd, kff_vals))
+
+    return (kp, ki, kd, kff)
 
