@@ -240,7 +240,7 @@ def choose_vehicleModelName():
         else:
             print("  → Invalid selection. Please enter exactly one valid index or model name.\n")
 
-# ───────────────────────────── GAIN‐SCHEDULING ─────────────────────────────────
+# ───────────────────────────── GAIN‐SCHEDULING PID VALUES─────────────────────────────────
 def get_gains_for_speed(ref_speed: float):
     """
     Return (Kp, Ki, Kd, Kff) according to the current reference speed (kph).
@@ -266,4 +266,117 @@ def get_gains_for_speed(ref_speed: float):
     kff = float(np.interp(spd, kff_bp_spd, kff_vals))
 
     return (kp, ki, kd, kff)
+
+# ───────────────────────────── DeePC RELATED - HANKEL MATRIX ─────────────────────────────────
+def hankel(x, L):
+    """
+        ------Construct Hankel matrix------
+        x: data sequence (data_size, x_dim)
+        L: row dimension of the hankel matrix
+        T: data samples of data x
+        return: H(x): hankel matrix of x  H(x): (x_dim*L, T-L+1)
+                H(x) = [x(0)   x(1) ... x(T-L)
+                        x(1)   x(2) ... x(T-L+1)
+                        .       .   .     .
+                        .       .     .   .
+                        .       .       . .
+                        x(L-1) x(L) ... x(T-1)]
+                Hankel matrix of order L has size:  (x_dim*L, T-L+1)
+    """
+    if not isinstance(x, np.ndarray):
+        x = np.array(x)
+
+    T, x_dim = x.shape
+
+    Hx = np.zeros((L * x_dim, T - L + 1))
+    for i in range(L):
+        Hx[i * x_dim:(i + 1) * x_dim, :] = x[i:i + T - L + 1, :].T  # x need transpose to fit the hankel dimension
+    return Hx
+
+def hankel_full(ud, yd, Tini, THorizon):
+    """
+    Build the full DeePC Hankel matrix once by stacking past and future blocks.
+
+    Parameters:
+    -----------
+    ud : array_like, shape (T_data, u_dim)
+        Historical input sequence.
+    yd : array_like, shape (T_data, y_dim)
+        Historical output sequence.
+    Tini : int
+        Number of past (initialization) steps.
+    THorizon : int
+        Prediction horizon (number of future steps).
+
+    Returns:
+    --------
+    hankel_full_mtx : np.ndarray, shape ((u_dim + y_dim) * (Tini + THorizon), K)
+        A stacked Hankel matrix containing:
+            [ Up;  # past-input block
+              Yp;  # past-output block
+              Uf;  # future-input block
+              Yf ] # future-output block
+        where K = T_data - (Tini + THorizon) + 1 is the total number of columns. (Large number)
+    """
+    # Build block-Hankel for inputs and outputs
+    Hud = hankel(ud, Tini + THorizon)
+    Huy = hankel(yd, Tini + THorizon)
+
+    u_dim = ud.shape[1]
+    y_dim = yd.shape[1]
+
+    # Slice into past (first Tini) and future (last THorizon)
+    Up = Hud[: u_dim * Tini, :]
+    Uf = Hud[u_dim * Tini : u_dim * (Tini + THorizon), :]
+    Yp = Huy[: y_dim * Tini, :]
+    Yf = Huy[y_dim * Tini : y_dim * (Tini + THorizon), :]
+    print(f"Hankel full matrix with shape: Up{Up.shape}, Uf{Uf.shape},Yp{Yp.shape},Yf{Yf.shape}")
+    return Up, Uf, Yp, Yf
+
+def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_idx):
+
+    g_dim = hankel_subB_size - Tini - THorizon + 1
+    Up_cur = Up[:Tini,         hankel_idx-g_dim:hankel_idx+g_dim]
+    Uf_cur = Uf[:Tini,         hankel_idx-g_dim:hankel_idx+g_dim]
+    Yp_cur = Yp[Tini:THorizon, hankel_idx-g_dim:hankel_idx+g_dim]
+    Yf_cur = Yf[Tini:THorizon, hankel_idx-g_dim:hankel_idx+g_dim]
+    return Up_cur, Uf_cur, Yp_cur, Yf_cur
+
+def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_idx):
+    """
+    hankel_subB_size:   The sub-hankel matrix for current optimization problem
+    hankel_idx:         the current hankel matrix in the official run
+    The sub-hankel matrix was chosen as hankel_idx as center, and front g_dim, and back g_dim data section.
+      front g_dim for state estimation, and back g_dim for prediction. g_dim I'm leaving for 50 front and 50 back buffer by choosing g_dim = 100(hankel_subB_size=199)
+    """
+    # how many columns on each side of hankel_idx we want
+    g_dim = hankel_subB_size - Tini - THorizon + 1
+
+    # desired slice is [start:end] with width = end - start = 2*g_dim
+    start = hankel_idx - g_dim
+    end   = hankel_idx + g_dim
+    width = end - start
+
+    # allocate zero‐padded output blocks
+    Up_cur = np.zeros((Tini,            width), dtype=Up.dtype)
+    Uf_cur = np.zeros((Tini,            width), dtype=Uf.dtype)
+    Yp_cur = np.zeros((THorizon, width), dtype=Yp.dtype)
+    Yf_cur = np.zeros((THorizon, width), dtype=Yf.dtype)
+
+    # clamp source columns to [0, max_col)
+    max_col = Up.shape[1]
+    src_start = max(start,               0)
+    src_end   = min(end,   max_col)
+
+    # where in the padded block these columns should go
+    dst_start = src_start - start        # if start<0, dst_start>0
+    dst_end   = dst_start + (src_end - src_start)
+
+    # copy the in-bounds slice into the zero blocks
+    Up_cur[:,      dst_start:dst_end] = Up[:Tini,         src_start:src_end]
+    Uf_cur[:,      dst_start:dst_end] = Uf[:Tini,         src_start:src_end]
+    Yp_cur[:,      dst_start:dst_end] = Yp[:THorizon,     src_start:src_end]
+    Yf_cur[:,      dst_start:dst_end] = Yf[:THorizon,     src_start:src_end]
+
+    return Up_cur, Uf_cur, Yp_cur, Yf_cur
 

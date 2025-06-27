@@ -13,7 +13,7 @@ Required setup:
     sudo ip link set can1 up type can bitrate 500000 dbitrate 1000000 fd on
     sudo ip link set can2 up type can bitrate 500000 dbitrate 1000000 fd on
 """
-import os
+import psutil, os
 import time
 from datetime import datetime
 import threading
@@ -33,7 +33,7 @@ from adafruit_pca9685 import PCA9685
 
 import cantools
 import can
-import casadi as ca
+import casadi as cs
 from acados_template import AcadosOcp, AcadosOcpSolver
 import deepctools as dpc
 from deepctools.util import *
@@ -56,40 +56,72 @@ if __name__ == "__main__":
     # ─── DeePC Acados SETUP ──────────────────────────────────────────────────────
     # DeePC paramters    
     PROJECT_DIR = Path(__file__).resolve().parent 
-    DATA_DIR   = PROJECT_DIR / "dataForHankle"                                   # Hankel matrix data loading location
-    CACHE_FILE = os.path.join(DATA_DIR, "hankel_dataset.npz")       # Cache the previously saved Hankel matrix
-    s = 1                       # How many steps before we solve again the DeePC problem - how many control input used per iteration
-    Tini = 50                   # Size of the initial set of data - 0.5s bandwidth
-    THorizon = 50               # Prediction Horizon length - Np
-    lambda_g = 1                # g regularizer (see DeePC paper, eq. 8)
-    lambda_y = 1                # y regularizer (see DeePC paper, eq. 8)
-    lambda_u = 0                # u regularizer
-    u_dim = 1                                   # the dimension of control inputs - DR case: 1 - PWM input
-    y_dim = 1                                   # the dimension of controlled outputs - DR case: 1 -Dyno speed output
-    Q = np.diag(np.tile(1, THorizon))           # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
-    R = np.diag(np.tile(1, THorizon))           # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
-    ineqconidx = {'u': [0], 'y':[0]}                                            # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
-    ineqconbd={'lbu': np.array([-15]), 'ubu': ([100]),
-               'lby': np.array([0]), 'uby': np.array([140])}                    # specify the bounds for u and y
-
-    if os.path.isfile(CACHE_FILE):
-        npz = np.load(CACHE_FILE)
+    DATA_DIR   = PROJECT_DIR / "dataForHankle" / "smallDataSet"                 # Hankel matrix data loading location
+    CACHE_FILE_Ori_DATA = os.path.join(DATA_DIR, "hankel_dataset.npz")          # Cache the previously saved SISO data
+    CACHE_FILE_HANKEL_DATA = os.path.join(DATA_DIR, "hankel_matrix.npz")       # Cache the previously saved Hankel matrix
+    if os.path.isfile(CACHE_FILE_Ori_DATA):
+        print(f"[Main] Using cached input output data from {CACHE_FILE_Ori_DATA}")
+        npz = np.load(CACHE_FILE_Ori_DATA)
         ud, yd = npz['ud'], npz['yd']
-    ud, yd = load_timeseries(DATA_DIR)          # history data collected offline to construct Hankel matrix; size (T, ud/yd)
-    T = ud.shape[0]                             # the length of offline collected data
-    np.savez(CACHE_FILE, ud=ud, yd=yd)
+    else:
+        print("[Main] Start to load the fresh offline data for building hankel matrix... this may take a while")
+        ud, yd = load_timeseries(DATA_DIR)          # history data collected offline to construct Hankel matrix; size (T, ud/yd)
+        np.savez(CACHE_FILE_Ori_DATA, ud=ud, yd=yd)
+        print(f"[Main] Finished loading data for hankel matrix, and saved to {CACHE_FILE_Ori_DATA}")
+
+    
     # init deepc tools
-    dpc_args = [u_dim, y_dim, T, Tini, THorizon, ud, yd, Q, R]
-    dpc_kwargs = dict(lambda_g=lambda_g,
-                      lambda_y=lambda_y,
+    print("[Main] Initiate DeePC setup and compile procedure..")
+    u_dim       = 1                                    # the dimension of control inputs - DR case: 1 - PWM input
+    y_dim       = 1                                    # the dimension of controlled outputs - DR case: 1 -Dyno speed output
+    T = ud.shape[0]                                    # the length of offline collected data
+    # s = 1                                            # How many steps before we solve again the DeePC problem - how many control input used per iteration
+    # DeePC related hyperparameters to tune
+    Tini        = 50                                  # Size of the initial set of data       - 0.5s(5s) bandwidth
+    THorizon    = 50                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth
+    Q_val = 1
+    R_val = 1
+    lambda_g_val= 10
+    lambda_y_val= 2
+    lambda_u_val= 2
+    g_dim       = T-Tini-THorizon+1                    # g_dim=T-Tini-Np+1
+    hankel_subB_size = 199                             # hankel sub-Block column size(200) at each run-time step !!! very important hyperparameter to tune
+    #DeePC_kickIn_time = 100                            # because we need to build hankel matrix around the current time point, should be half of the hankel_subB_size
+    if os.path.isfile(CACHE_FILE_HANKEL_DATA):
+        print(f"[Main] Using cached hankel matrix data from {CACHE_FILE_HANKEL_DATA}")
+        npz_hankel = np.load(CACHE_FILE_HANKEL_DATA)
+        Up, Uf, Yp, Yf = npz_hankel['Up'], npz_hankel['Uf'], npz_hankel['Yp'], npz_hankel['Yf']
+    else:
+        print("[Main] Start to make hankel matrix data from cache... this may take a while")
+        Up, Uf, Yp, Yf = hankel_full(ud, yd, Tini, THorizon)
+        np.savez(CACHE_FILE_HANKEL_DATA, Up=Up, Uf=Uf, Yp=Yp, Yf=Yf)
+        print(f"[Main] Finished making data for hankel matrix with shape Up{Up.shape}, Uf{Uf.shape}, Yp{Yp.shape}, Yf{Yf.shape}, and saved to {CACHE_FILE_HANKEL_DATA}")
+
+
+    # TODO: Since the g_dim is too big, if use original deepctools, the matrix become untractable, need to use casadi representation to formulate the problem
+    # lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))             # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
+    # lambda_y    = np.diag(np.tile(lambda_y_val, Tini))              # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
+    # lambda_u    = np.diag(np.tile(lambda_u_val, Tini)) # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
+    # Q           = np.diag(np.tile(Q_val, THorizon))    # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
+    # R           = np.diag(np.tile(R_val, THorizon))    # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
+
+    # TODO: Need to add a constraint to regulated the rate of change of control input u
+    ineqconidx  = {'u': [0], 'y':[0]}                                            # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
+    ineqconbd   ={'lbu': np.array([-15]), 'ubu': ([100]),                           # specify the bounds for u and y
+                    'lby': np.array([0]), 'uby': np.array([140])}                   
+
+    dpc_args = [u_dim, y_dim, T, Tini, THorizon, ud, yd, Q_val, R_val]
+    dpc_kwargs = dict(lambda_g=lambda_g_val,
+                      lambda_y=lambda_y_val,
+                      lambda_u=lambda_u_val,
                       sp_change=True,
                       ineqconidx=ineqconidx,
                       ineqconbd=ineqconbd
                       )
-    dpc = dpc.deepctools(*dpc_args, **dpc_kwargs)
+    dpc = dpcAcados.deepctools(*dpc_args, **dpc_kwargs)
 
     # init and formulate deepc solver
-    dpc_opts = {                            # cs.nlpsol solver parameters
+    dpc_opts = {                            # cs.nlpsol solver parameters - not used in acados
         'ipopt.max_iter': 100,  # 50
         'ipopt.tol': 1e-5,
         'ipopt.print_level': 1,
@@ -98,9 +130,14 @@ if __name__ == "__main__":
         'ipopt.acceptable_obj_change_tol': 1e-6,
     }
 
-    dpc.init_DeePCAcadosSolver(pts=dpc_opts)
-    # dpc.init_DeePCsolver(pts=dpc_opts)            # Those solver are available as part of the deepctools, but may be slower than DeePCAcados for real time application
+    # Specify what solver wanted to use
+    # dpc.init_DeePCAcadosSolver(pts=dpc_opts)
+    dpc.init_DeePCsolver(uloss='u', pts=dpc_opts)            # Those solver are available as part of the deepctools, but may be slower than DeePCAcados for real time application
     # dpc.init_RDeePCsolver(pts=dpc_opts)
+    print("[Main] Finished compiling DeePC problem, starting the nominal system setup procedure!")
+
+
+
 
     # ─── PCA9685 PWM SETUP ──────────────────────────────────────────────────────
     # i2c = busio.I2C(board.SCL, board.SDA)
@@ -151,6 +188,7 @@ if __name__ == "__main__":
     all_cycles = load_drivecycle_mat_files(base_folder) # Load reference cycle from .mat(s)
     cycle_keys = choose_cycle_key(all_cycles)           # Prompt the user to choose multiple drive cycles the user wish to test
     veh_modelName = choose_vehicleModelName()           # Prompt the user to choose the model of testing vehicle for logging purpose
+    # System parameters
     max_delta = 50.0            # maximum % change per 0.01 s tick - regulate the rate of change of pwm output u
     SOC_CycleStarting = 0.0     # Managing Vehicle SOC
     SOC_Stop = 2.2              # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
@@ -183,6 +221,7 @@ if __name__ == "__main__":
         ref_horizon_speed = ref_speed[:THorizon].reshape(-1,1)                    # Prepare reference speed horizon for DeePC - Length 
 
         # -----------------Reset states--------------------------------------------------------------------------------------
+        hankel_idx     = 0
         prev_error     = 0.0
         u_prev         = 0.0
         prev_ref_speed = None                   # Track previous reference speed 
@@ -213,7 +252,7 @@ if __name__ == "__main__":
                     break
                 else:
                     rspd_now = float(np.interp(elapsed_time, ref_time, ref_speed))
-                    
+
                 # -- Interpolate reference speed for DeePC ref_horizon_speed -------------------------
                 t_future = elapsed_time + Ts * np.arange(THorizon)      # look 0.01 * THorizon s ahead of time
                 if t_future[-1] >= ref_time[-1]:                        # if the last future time is beyond your reference horizon...
@@ -229,7 +268,10 @@ if __name__ == "__main__":
                 e_k    = rspd_now - v_meas
                 
                 # ── Implementing real time acados based solver for DeePC ────────
-                u_opt, g_opt, t_deepc = dpc.solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed)         #Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
+                # if hankel_idx == DeePC_kickIn_time (initial time where DeePC kicks in): # At start: can build a local hankel matrix now, start to use DeePC
+                # if hankel_idx+THorizon >=   # At the end, hankel matrix exceed the full length of reference data
+                Up_cur, Uf_cur, Yp_cur, Yf_cur = hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_idx)
+                u_opt, g_opt, t_deepc = dpc.solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed, Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur)         #Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
 
                 # ──  Add a vehicle speed limiter safety feature (Theoretically don't need this part because all the control contraints are baked in the DeePC formulation) ────────
                 u_unclamped = u_opt[0]# Total output u[k], clipped to [-15, +100] 
@@ -273,6 +315,7 @@ if __name__ == "__main__":
 
                 # ── 11) Schedule next tick at 100 Hz ───────────────────────────────
                 next_time += Ts
+                hankel_idx += 1
 
                 # 12) Append this tick’s values to log_data
                 log_data.append({

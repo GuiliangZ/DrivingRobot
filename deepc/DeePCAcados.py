@@ -53,7 +53,7 @@ class deepctools():
 
             initialize_DeePCsolver(uloss, opts)  |  construct DeePC solver
             initialize_RDeePCsolver(uloss, opts) |  construct Robust DeePC solver
-            solver_step(uini, yini)    |  solve the optimization problem one step
+            solver_step(uini, yini)              |  solve the optimization problem one step
          ----------------------------------------------------------------------------------------------------------
     """
 
@@ -134,7 +134,8 @@ class deepctools():
         self.solver = None
         self.lbc = None
         self.ubc = None
-
+        self.lb_du = None
+        self.ub_du = None
 
     def _checkvar(self):
         """
@@ -242,6 +243,11 @@ class deepctools():
             Hc_list = []
             lbc_list = []
             ubc_list = []
+            # ----- always build Δu so we can constrain it -----
+            u_cur  = cs.mtimes(self.Uf, g)                           # (Np*u_dim,1)
+            u_prev = cs.vertcat(uini[-self.u_dim:], u_cur[:-self.u_dim])
+            du     = u_cur - u_prev                                  # (Np*u_dim,1)
+
             for varname, idx in ineqconidx.items():
                 if varname == 'u':
                     H_all = self.Uf.copy()
