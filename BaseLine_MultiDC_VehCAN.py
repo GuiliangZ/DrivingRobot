@@ -349,7 +349,7 @@ if __name__ == "__main__":
     SOC_CycleStarting = 0.0     # Managing Vehicle SOC
     SOC_Stop = 2.2              # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
 
-    Ts = 0.01                   # 100 Hz main control loop updating rate - Sampling time 
+    Ts = 0.1                   # 100 Hz main control loop updating rate - Sampling time 
 
     for idx, cycle_key in enumerate(cycle_keys):
         # Stop the test if the vehicle SOC is too low to prevent draining the vehicle

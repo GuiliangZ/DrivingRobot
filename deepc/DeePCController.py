@@ -74,7 +74,6 @@ if __name__ == "__main__":
     print("[Main] Initiate DeePC setup and compile procedure..")
     u_dim       = 1                                    # the dimension of control inputs - DR case: 1 - PWM input
     y_dim       = 1                                    # the dimension of controlled outputs - DR case: 1 -Dyno speed output
-    T = ud.shape[0]                                    # the length of offline collected data
     # s = 1                                            # How many steps before we solve again the DeePC problem - how many control input used per iteration
     # DeePC related hyperparameters to tune
     Tini        = 50                                  # Size of the initial set of data       - 0.5s(5s) bandwidth
@@ -84,8 +83,10 @@ if __name__ == "__main__":
     lambda_g_val= 10
     lambda_y_val= 2
     lambda_u_val= 2
-    g_dim       = T-Tini-THorizon+1                    # g_dim=T-Tini-Np+1
-    hankel_subB_size = 199                             # hankel sub-Block column size(200) at each run-time step !!! very important hyperparameter to tune
+    hankel_subB_size = 299                             # hankel sub-Block column size at each run-time step !!! very important hyperparameter to tune. When 
+    T           = hankel_subB_size                     # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
+    g_dim       = T-Tini-THorizon+1                    # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
+
     #DeePC_kickIn_time = 100                            # because we need to build hankel matrix around the current time point, should be half of the hankel_subB_size
     if os.path.isfile(CACHE_FILE_HANKEL_DATA):
         print(f"[Main] Using cached hankel matrix data from {CACHE_FILE_HANKEL_DATA}")
@@ -97,30 +98,26 @@ if __name__ == "__main__":
         np.savez(CACHE_FILE_HANKEL_DATA, Up=Up, Uf=Uf, Yp=Yp, Yf=Yf)
         print(f"[Main] Finished making data for hankel matrix with shape Up{Up.shape}, Uf{Uf.shape}, Yp{Yp.shape}, Yf{Yf.shape}, and saved to {CACHE_FILE_HANKEL_DATA}")
 
-
-    # TODO: Since the g_dim is too big, if use original deepctools, the matrix become untractable, need to use casadi representation to formulate the problem
+    # Since the g_dim is too big, if use original deepctools, the matrix become untractable, need to use casadi representation to formulate the problem
     # lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))             # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
     # lambda_y    = np.diag(np.tile(lambda_y_val, Tini))              # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
     # lambda_u    = np.diag(np.tile(lambda_u_val, Tini)) # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
     # Q           = np.diag(np.tile(Q_val, THorizon))    # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
     # R           = np.diag(np.tile(R_val, THorizon))    # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
 
-    # TODO: Need to add a constraint to regulated the rate of change of control input u
-    ineqconidx  = {'u': [0], 'y':[0]}                                            # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
+    # Added a constraint to regulated the rate of change of control input u
+    ineqconidx  = {'u': [0], 'y':[0], 'du':[0]}                                               # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
     ineqconbd   ={'lbu': np.array([-15]), 'ubu': ([100]),                           # specify the bounds for u and y
-                    'lby': np.array([0]), 'uby': np.array([140])}                   
+                    'lby': np.array([0]), 'uby': np.array([140]),
+                    'lbdu': np.array([-10]), 'ubdu': np.array([1.2])}      # lower and upper bound for change of control input - can find the approximate range from baseline data for 100 Hz             
 
-    dpc_args = [u_dim, y_dim, T, Tini, THorizon, ud, yd, Q_val, R_val]
-    dpc_kwargs = dict(lambda_g=lambda_g_val,
-                      lambda_y=lambda_y_val,
-                      lambda_u=lambda_u_val,
-                      sp_change=True,
-                      ineqconidx=ineqconidx,
-                      ineqconbd=ineqconbd
-                      )
+    dpc_args = [u_dim, y_dim, T, Tini, THorizon]                            # THorizon is Np in dpc class
+    dpc_kwargs = dict(ineqconidx=ineqconidx, ineqconbd=ineqconbd)
+
     dpc = dpcAcados.deepctools(*dpc_args, **dpc_kwargs)
 
     # init and formulate deepc solver
+    # dpc.init_DeePCAcadosSolver(ineqconidx=ineqconidx, ineqconbd=ineqconbd) # Use acados solver
     dpc_opts = {                            # cs.nlpsol solver parameters - not used in acados
         'ipopt.max_iter': 100,  # 50
         'ipopt.tol': 1e-5,
@@ -129,15 +126,11 @@ if __name__ == "__main__":
         'ipopt.acceptable_tol': 1e-8,
         'ipopt.acceptable_obj_change_tol': 1e-6,
     }
-
-    # Specify what solver wanted to use
-    # dpc.init_DeePCAcadosSolver(pts=dpc_opts)
-    dpc.init_DeePCsolver(uloss='u', pts=dpc_opts)            # Those solver are available as part of the deepctools, but may be slower than DeePCAcados for real time application
-    # dpc.init_RDeePCsolver(pts=dpc_opts)
+    # Specify what solver wanted to use - # Those solver are available as part of the deepctools, but may be slower than DeePCAcados for real time application
+    # dpc.init_DeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)            
+    # dpc.init_RDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
+    dpc.init_FullRDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
     print("[Main] Finished compiling DeePC problem, starting the nominal system setup procedure!")
-
-
-
 
     # ─── PCA9685 PWM SETUP ──────────────────────────────────────────────────────
     # i2c = busio.I2C(board.SCL, board.SDA)
@@ -269,12 +262,14 @@ if __name__ == "__main__":
                 
                 # ── Implementing real time acados based solver for DeePC ────────
                 # if hankel_idx == DeePC_kickIn_time (initial time where DeePC kicks in): # At start: can build a local hankel matrix now, start to use DeePC
-                # if hankel_idx+THorizon >=   # At the end, hankel matrix exceed the full length of reference data
+                # if hankel_idx+THorizon >= DeePC_stop_time  # At the end, hankel matrix exceed the full length of reference data
                 Up_cur, Uf_cur, Yp_cur, Yf_cur = hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_idx)
-                u_opt, g_opt, t_deepc = dpc.solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed, Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur)         #Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
+                u_opt, g_opt, t_deepc = dpc.solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           #Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
+                                                        Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q_val, R_val=R_val,
+                                                         lambda_g_val=lambda_g_val, lambda_y_val=lambda_y_val, lambda_u_val=lambda_u_val)         
 
                 # ──  Add a vehicle speed limiter safety feature (Theoretically don't need this part because all the control contraints are baked in the DeePC formulation) ────────
-                u_unclamped = u_opt[0]# Total output u[k], clipped to [-15, +100] 
+                u_unclamped = u_opt[0]      # Total output u[k], clipped to [-15, +100] 
                 u = float(np.clip(u_unclamped, -15.0, +100.0))
                 lower_bound = u_prev - max_delta
                 upper_bound = u_prev + max_delta                        # Allow u to move by at most ±max_delta from the previous cycle:

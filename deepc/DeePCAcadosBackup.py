@@ -1,5 +1,5 @@
 """
-Name: DeePCAcados.py
+Name: DeePCAcados.py - backup
 Author: Guiliang Zheng
 Date:at 24/06/2025
 version: 1.0.0
@@ -57,7 +57,7 @@ class deepctools():
          ----------------------------------------------------------------------------------------------------------
     """
 
-    def __init__(self, u_dim, y_dim, T, Tini, Np, ud, yd, Q, R, lambda_g=None, lambda_y=None, lambda_u=None,
+    def __init__(self, u_dim, y_dim, T, Tini, Np, ud, yd, Q, R, lambda_g=None, lambda_y=None,
                  sp_change=True, us=None, ys=None, ineqconidx=None, ineqconbd=None, svd=False):
         """
             ------Initialize the system parameters and DeePC config------                                                       | ----- Drive Robot --------
@@ -584,4 +584,3 @@ class deepctools():
         g_opt = sol['x'].full().ravel()
         u_opt = np.matmul(self.Uf, g_opt)
         return u_opt, g_opt, t_s
-

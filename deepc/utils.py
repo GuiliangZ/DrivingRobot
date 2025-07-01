@@ -334,15 +334,6 @@ def hankel_full(ud, yd, Tini, THorizon):
     return Up, Uf, Yp, Yf
 
 def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_idx):
-
-    g_dim = hankel_subB_size - Tini - THorizon + 1
-    Up_cur = Up[:Tini,         hankel_idx-g_dim:hankel_idx+g_dim]
-    Uf_cur = Uf[:Tini,         hankel_idx-g_dim:hankel_idx+g_dim]
-    Yp_cur = Yp[Tini:THorizon, hankel_idx-g_dim:hankel_idx+g_dim]
-    Yf_cur = Yf[Tini:THorizon, hankel_idx-g_dim:hankel_idx+g_dim]
-    return Up_cur, Uf_cur, Yp_cur, Yf_cur
-
-def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_idx):
     """
     hankel_subB_size:   The sub-hankel matrix for current optimization problem
     hankel_idx:         the current hankel matrix in the official run
@@ -380,3 +371,12 @@ def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_id
 
     return Up_cur, Uf_cur, Yp_cur, Yf_cur
 
+
+# def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_idx):
+
+#     g_dim = hankel_subB_size - Tini - THorizon + 1
+#     Up_cur = Up[:Tini,         hankel_idx-g_dim:hankel_idx+g_dim]
+#     Uf_cur = Uf[:Tini,         hankel_idx-g_dim:hankel_idx+g_dim]
+#     Yp_cur = Yp[Tini:THorizon, hankel_idx-g_dim:hankel_idx+g_dim]
+#     Yf_cur = Yf[Tini:THorizon, hankel_idx-g_dim:hankel_idx+g_dim]
+#     return Up_cur, Uf_cur, Yp_cur, Yf_cur
