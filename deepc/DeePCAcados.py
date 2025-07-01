@@ -8,9 +8,11 @@ Description: Toolbox to formulate the real-time DeePC problem using Acados solve
 import time
 import warnings
 import numpy as np
+from scipy.linalg import block_diag
 import casadi as cs
+from casadi import vcat
 import casadi.tools as ctools
-from acados_template import AcadosOcp, AcadosOcpSolver
+from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
 
 # packages from deepctools
 from deepctools import util
@@ -122,9 +124,6 @@ class deepctools():
                 # tracking‐error weight and regularization scalar
                 ctools.entry('Q',        shape=tuple([self.y_dim * self.Np,    self.y_dim * self.Np])),  # diagonal entries of Q
                 ctools.entry('R',        shape=tuple([self.u_dim * self.Np,    self.u_dim * self.Np])),  # scalar weight on g-regularization
-                
-        
-        
         ]
 
         self.parameters = ctools.struct_symSX(parameters)
@@ -181,63 +180,100 @@ class deepctools():
             lbc <= Hc g <= ubc
         where H, Aeq, Hc come from your precomputed Up, Uf, Yp, Yf blocks.
         """
+        print('>> Acados based Real-time DeePC design formulating.. This may take a while...')
+        # if uloss not in ["u", "du"]:
+        #     raise ValueError("uloss should be one of: 'u', 'du'!")
+        if self.g_dim <= (self.u_dim + self.y_dim) * self.Tini:
+            raise ValueError(f'OCP do not have enough degrees of freedom | Should: g_dim > (u_dim + y_dim) * Tini, but got: {self.g_dim} <= {(self.u_dim + self.y_dim) * self.Tini}!')
+
         # define parameters and decision variable
         uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]
         g, = self.optimizing_target[...]  # data are stored in list [], notice that ',' cannot be missed
 
-        # 2) Build cost matrices
-        H =     self.Uf.T @ self.R @ self.Uf \
-            + self.Yf.T @ self.Q @ self.Yf
-        H = 0.5*(H + H.T)  # ensure symmetry
+        # To get du
+        u_cur = cs.mtimes(Uf_cur, g)
+        u_prev = cs.vertcat(uini[-self.u_dim:], cs.mtimes(Uf_cur, g)[:-self.u_dim])
+        du = u_cur - u_prev
+        D_du   = cs.jacobian(du, g)   # (Np*u_dim × g_dim)
 
-        # 3) Equality constraints: Up g = uini, Yp g = yini
-        Aeq = np.vstack([self.Up, self.Yp])
-        neq = Aeq.shape[0]
+        # To get constrains
+        Hc, lbc_ineq, ubc_ineq, ineq_flag = self._init_ineq_cons(ineqconidx, ineqconbd, Up_cur, Yp_cur, du)
+        
+        # Define the objective function from CasADi parameters
+        r1 = Yf_cur @ g - yref              # (n_y*Np x 1): tracking error
+        r2 = Uf_cur @ g                     # (n_u*Np x 1): control effort
+        r3 = Yp_cur @ g - yini              # (n_y*Tini x 1): init‐condition slack - Y
+        r4 = Up_cur @ g - uini              # (n_u*Tini x 1): init‐condition slack - U
+        r5 = g                              # (n_g    x 1): regularization
+        print(f'The shape of r1:{r1.shape}, r2:{r2.shape},r3:{r3.shape},r4:{r4.shape},r5:{r5.shape}')
 
-        # 4) Inequality constraints, if any
-        Hc, lbc, ubc, ineq_flag = self._init_ineq_cons(self.ineq_idx, self.ineq_bd)
+        Jf  = cs.mtimes(Q.T,   cs.power(r1, 2))          # Σᵢ Qᵢ·r1[i]²
+        Ju  = cs.mtimes(R.T,   cs.power(r2, 2))          # Σᵢ Rᵢ·r2[i]²
+        Jyp = cs.mtimes(lambda_y.T, cs.power(r3, 2))
+        Jup = cs.mtimes(lambda_u.T, cs.power(r4, 2))
+        Jg  = lambda_g[0] * (r5.T @ r5)                  # g-regularization
+        print(f'The shape of Jf:{Jf.shape}, Ju:{Ju.shape},Jyp:{Jyp.shape},Jup:{Jup.shape},Jg:{Jg.shape}')
 
-        # 5) Create acados OCP object
+        obj = Jf + Ju + Jyp + Jup + Jg
+        print(f'The shape of acados obj fcn output is: {obj.shape}')
+
+        # Start the Acados formulation
+        model = AcadosModel()
+        model.name = 'deepc'
+        model.x = g                         # x is the decision variable
+        model.p = cs.vertcat(
+            uini, yini, yref,
+            cs.reshape(Up_cur, -1, 1),
+            cs.reshape(Yp_cur, -1, 1),
+            cs.reshape(Uf_cur, -1, 1),
+            cs.reshape(Yf_cur, -1, 1),
+            cs.reshape(Q, -1, 1), cs.reshape(R, -1, 1),
+            cs.reshape(lambda_y, -1, 1), cs.reshape(lambda_u, -1, 1), cs.reshape(lambda_g, -1, 1),
+        )
+        model.f_expl_expr = cs.SX.zeros(self.g_dim, 1)          # zero‐dynamics: ẋ = 0. # Using purely hankel-based styatic DeePC - In this setup you’re treating your entire decision vector g as a “state” with zero dynamics so that Acados turns your one‐step OCP into a pure static QP
+
         ocp = AcadosOcp()
-        ocp.model = ocp.create_model("deePC_qp")
-        # decision variable is g only
-        ocp.model.x = cs.SX.sym("g", self.g_dim)
-
-        # 6) cost
-        ocp.cost.Q = H
-        # q will be updated every solve, so leave as zeros here
-        ocp.cost.yref = np.zeros(self.g_dim)
-
-        # 7) eq constraints
-        ocp.constraints.constr_expr = Aeq @ ocp.model.x
-        ocp.constraints.idxbx = np.arange(neq)    # equality: lb = ub
-        ocp.constraints.lbx = np.zeros(neq)
-        ocp.constraints.ubx = np.zeros(neq)
-
-        ocp.constraints.C   = Hc
-        ocp.constraints.lc  = lbc
-        ocp.constraints.uc  = ubc
+        ocp.model = model
+        ocp.dims.N_horizon = 1                      # single shooting step means only have one interval btw initial state and terminal state
+        ocp.dims.nx = self.g_dim            # state size
+        ocp.dims.np = model.p.size()[0]     # parameter size
 
 
-        # 8) ineq constraints
+        ocp.cost.cost_type_0 = 'EXTERNAL'
+        ocp.model.cost_expr_ext_cost_0 = obj
+        ocp.cost.cost_ext_fun_type_0 = 'casadi'
+        ocp.model.cost_expr_ext_cost = obj
+        ocp.cost.cost_ext_fun_type  = 'casadi'
+        ocp.model.cost_expr_ext_cost_e = obj
+        ocp.cost.cost_ext_fun_type_e   = 'casadi'
+
         if ineq_flag:
-            nc = Hc.shape[0]
-            ocp.constraints.constr_expr = cs.vertcat(
-                ocp.constraints.constr_expr,
-                Hc @ ocp.model.x
-            )
-            ocp.constraints.idxbx = np.arange(neq + nc)
-            ocp.constraints.lbx = np.hstack([np.zeros(neq), lbc])
-            ocp.constraints.ubx = np.hstack([np.zeros(neq), ubc])
+            # — build a single SX vector h = [Hc@g; du]
+            ocp.constraints.constr_type = 'BGH'
+            ocp.constraints.expr_h      = vcat([ Hc @ g, du ])      # SX of shape (n_rows, 1)
 
-        # 9) solver options
-        ocp.solver_options.qp_solver = 'FULL_CONDENSING_QPOASES'
-        for k, v in opts.items():
-            ocp.solver_options.__dict__[k] = v
+            # — set matching numeric bounds: lh ≤ h(x,u) ≤ uh
+            ocp.constraints.lh          = np.array(lbc_ineq)        # shape = (n_rows,)
+            ocp.constraints.uh          = np.array(ubc_ineq)        # shape = (n_rows,)
 
-        # 10) create solver
-        self.acados_solver = AcadosOcpSolver(ocp, json_file = 'acados_ocp.json')
+        else:
+            # — no constraints: empty h, empty bounds
+            ocp.constraints.constr_type = 'BGH'
+            ocp.constraints.expr_h      = cs.SX.zeros(0, 1)            # zero-row SX
+            ocp.constraints.lh          = np.zeros(0)
+            ocp.constraints.uh          = np.zeros(0)
 
+        ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'       # also could try 'FULL_CONDENSING_QPOASES'
+        ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
+        ocp.solver_options.integrator_type = 'DISCRETE'                 # Using purely hankel-based styatic DeePC, best choice-'DISCRETE'. actual dynamic in OCP: 'ERK'-classic Runge-Kutta 4. Options: 'IRK', 'GNSF', 'LIFTED_IRK', 'DISCRETE
+        ocp.solver_options.nlp_solver_type = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
+        ocp.dims.N_horizon = self.Np                                            # number of shooting intervals = prediction steps
+        ocp.solver_options.tf = 1.0                                     # For s discrete dynamics, static QP in g, tf is unused - can leave it at the default(1.0)
+
+        # Initilize g and all the parameters with zero for acados initial build, will update those parameters at run time
+        n_p = ocp.model.p.numel()           # total number of entries in the SX parameter vector
+        ocp.parameter_values = np.zeros(n_p)  # or fill with your actual parameter data
+        self.solver = AcadosOcpSolver(ocp, json_file = 'DeePC_acados_ocp.json')
 
     @timer
     def init_DeePCsolver(self, uloss='u', ineqconidx=None, ineqconbd=None, opts={}):
@@ -273,9 +309,9 @@ class deepctools():
                 this is the equality constraints should be less than decision variables
             -----------------------------------------------------------------------------------------------
         """
-        print('>> DeePC design formulating')
-        if uloss not in ["u", "uus", "du"]:
-            raise ValueError("uloss should be one of: 'u', 'uus', 'du'!")
+        print('>> DeePC design formulating.. This may take a while...')
+        if uloss not in ["u", "du"]:
+            raise ValueError("uloss should be one of: 'u', 'du'!")
         if self.g_dim <= (self.u_dim + self.y_dim) * self.Tini:
             raise ValueError(f'NLP do not have enough degrees of freedom | Should: g_dim > (u_dim + y_dim) * Tini, but got: {self.g_dim} <= {(self.u_dim + self.y_dim) * self.Tini}!')
 
@@ -325,6 +361,7 @@ class deepctools():
         # inequality constrains:    ulb <= Uf_u * g <= uub 
         if ineq_flag:
             C += [cs.mtimes(Hc, g)]
+            C += [du]
             lbc.extend(lbc_ineq)
             ubc.extend(ubc_ineq)
 
@@ -369,7 +406,7 @@ class deepctools():
                 this is the equality constraints should be less than decision variables
             -----------------------------------------------------------------------------------------------
         """
-        print('>> Robust DeePC design formulating')
+        print('>> Robust DeePC design formulating.. This may take a while...')
         if uloss not in ["u", "du"]:
             raise ValueError("uloss should be one of: 'u', 'du'!")
         if self.g_dim <= self.u_dim * self.Tini:
@@ -419,6 +456,7 @@ class deepctools():
         # inequality constrains:    ulb <= Uf_u * g <= uub 
         if ineq_flag:
             C += [cs.mtimes(Hc, g)]
+            C += [du]
             lbc.extend(lbc_ineq)
             ubc.extend(ubc_ineq)
 
@@ -434,7 +472,7 @@ class deepctools():
         """
             Add both Yp and Up slack variables in RDeePCsolver, where RDeePCsolver only have Yp as slack variable
         """
-        print('>> Robust DeePC design formulating')
+        print('>>Full Robust DeePC design formulating.. This may take a while...')
         if uloss not in ["u", "du"]:
             raise ValueError("uloss should be one of: 'u', 'du'!")
         if self.g_dim <= self.u_dim * self.Tini:
@@ -506,7 +544,7 @@ class deepctools():
         """
 
         if yref is None:
-            raise ValueError("Do not give value of 'uref' or 'yref', but required in objective function!")
+            raise ValueError("Did not give value of 'yref', but required in objective function!")
         parameters = np.concatenate((uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val))
         g0_guess = np.linalg.pinv(np.concatenate((Up_cur, Yp_cur), axis=0)) @ np.concatenate((uini, yini))
 
@@ -518,3 +556,46 @@ class deepctools():
         u_opt = np.matmul(Uf_cur, g_opt)
         return u_opt, g_opt, t_s
 
+
+    def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val, g_prev=None):
+        """
+            solver solve the nlp for one time
+            uini, yini:  [array]   | (dim*Tini, 1)
+            uref, yref:  [array]   | (dim*Horizon, 1) if sp_change=True
+              g0_guess:  [array]   | (T-L+1, 1)
+            return:
+                u_opt:  the optimized control input for the next Np steps
+                 g_op:  the optimized operator g
+                  t_s:  solving time
+        """
+        if yref is None:
+            raise ValueError("Did not give value of 'yref', but required in objective function!")
+        
+        parameters = np.concatenate([
+            uini.ravel(), yini.ravel(), yref.ravel(),
+            Up_cur.ravel(), Yp_cur.ravel(),
+            Uf_cur.ravel(), Yf_cur.ravel(),
+            Q_val.ravel(),    R_val.ravel(),
+            lambda_g_val.ravel(),   lambda_y_val.ravel(),   lambda_u_val.ravel(),
+        ])
+
+        # give acados initial guess
+        g_default = np.linalg.pinv(np.vstack([Up_cur, Yp_cur])) @ np.vstack([uini, yini])       #psuedo-inverse to get g_default initial hot-start guess
+        g_default = g_default.ravel()
+
+        # choose hot-start if available
+        if g_prev is not None:
+            # ensure the shape matches
+            g0 = g_prev.ravel()
+        else:
+            g0 = g_default
+        self.solver.set( 0, "x", g0)
+        self.solver.set( 0, "p", parameters )
+
+        t0 = cs.time()
+        sol = self.solver.solve()
+        t_s = float(cs.time() - t0)
+
+        g_opt = self.solver.get(0,"x")
+        u_opt = Uf_cur @ g_opt              # which is same as np.matmul(Uf_cur, g_opt)
+        return u_opt, g_opt, t_s

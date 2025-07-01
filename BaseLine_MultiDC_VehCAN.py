@@ -347,7 +347,7 @@ if __name__ == "__main__":
     FeedFwdTime = 0.65          # feedforward reference speed time
     max_delta = 50.0            # maximum % change per 0.01 s tick - regulate the rate of change of pwm output u
     SOC_CycleStarting = 0.0     # Managing Vehicle SOC
-    SOC_Stop = 2.2              # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
+    SOC_Stop = 97.9              # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
 
     Ts = 0.1                   # 100 Hz main control loop updating rate - Sampling time 
 
