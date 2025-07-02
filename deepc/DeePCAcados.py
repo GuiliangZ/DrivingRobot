@@ -154,14 +154,17 @@ class deepctools():
                     lb = ineqconbd['lby']
                     ub = ineqconbd['uby']
                 elif varname == 'du':
+                    # print(f'H_all is{H_all}')
                     dim = 1
                     lb = ineqconbd['lbdu']
                     ub = ineqconbd['ubdu']
+                    idx_H = [] 
                 else:
                     raise ValueError("%s variable not exist, should be 'u' or/and 'y'!" % varname)
 
                 idx_H = [v + i * dim for i in range(self.Np) for v in idx]
-                Hc_list.append(H_all[idx_H, :])
+                if varname != 'du':
+                    Hc_list.append(H_all[idx_H, :])
                 lbc_list.append(np.tile(lb, self.Np))
                 ubc_list.append(np.tile(ub, self.Np))
 
@@ -198,25 +201,7 @@ class deepctools():
 
         # To get constrains
         Hc, lbc_ineq, ubc_ineq, ineq_flag = self._init_ineq_cons(ineqconidx, ineqconbd, Up_cur, Yp_cur, du)
-        
-        # Define the objective function from CasADi parameters
-        r1 = Yf_cur @ g - yref              # (n_y*Np x 1): tracking error
-        r2 = Uf_cur @ g                     # (n_u*Np x 1): control effort
-        r3 = Yp_cur @ g - yini              # (n_y*Tini x 1): init‐condition slack - Y
-        r4 = Up_cur @ g - uini              # (n_u*Tini x 1): init‐condition slack - U
-        r5 = g                              # (n_g    x 1): regularization
-        print(f'The shape of r1:{r1.shape}, r2:{r2.shape},r3:{r3.shape},r4:{r4.shape},r5:{r5.shape}')
-
-        Jf  = cs.mtimes(Q.T,   cs.power(r1, 2))          # Σᵢ Qᵢ·r1[i]²
-        Ju  = cs.mtimes(R.T,   cs.power(r2, 2))          # Σᵢ Rᵢ·r2[i]²
-        Jyp = cs.mtimes(lambda_y.T, cs.power(r3, 2))
-        Jup = cs.mtimes(lambda_u.T, cs.power(r4, 2))
-        Jg  = lambda_g[0] * (r5.T @ r5)                  # g-regularization
-        print(f'The shape of Jf:{Jf.shape}, Ju:{Ju.shape},Jyp:{Jyp.shape},Jup:{Jup.shape},Jg:{Jg.shape}')
-
-        obj = Jf + Ju + Jyp + Jup + Jg
-        print(f'The shape of acados obj fcn output is: {obj.shape}')
-
+    
         # Start the Acados formulation
         model = AcadosModel()
         model.name = 'deepc'
@@ -230,49 +215,67 @@ class deepctools():
             cs.reshape(Q, -1, 1), cs.reshape(R, -1, 1),
             cs.reshape(lambda_y, -1, 1), cs.reshape(lambda_u, -1, 1), cs.reshape(lambda_g, -1, 1),
         )
-        model.f_expl_expr = cs.SX.zeros(self.g_dim, 1)          # zero‐dynamics: ẋ = 0. # Using purely hankel-based styatic DeePC - In this setup you’re treating your entire decision vector g as a “state” with zero dynamics so that Acados turns your one‐step OCP into a pure static QP
+        model.disc_dyn_expr = model.x          # shape (g_dim, 1) # zero‐dynamics: ẋ = 0. # Using purely hankel-based styatic DeePC - In this setup you’re treating your entire decision vector g as a “state” with zero dynamics so that Acados turns your one‐step OCP into a pure static QP
 
         ocp = AcadosOcp()
         ocp.model = model
-        ocp.dims.N_horizon = 1                      # single shooting step means only have one interval btw initial state and terminal state
+        ocp.dims.N = 1                      # single shooting step means only have one interval btw initial state and terminal state
         ocp.dims.nx = self.g_dim            # state size
         ocp.dims.np = model.p.size()[0]     # parameter size
 
-
-        ocp.cost.cost_type_0 = 'EXTERNAL'
-        ocp.model.cost_expr_ext_cost_0 = obj
-        ocp.cost.cost_ext_fun_type_0 = 'casadi'
-        ocp.model.cost_expr_ext_cost = obj
-        ocp.cost.cost_ext_fun_type  = 'casadi'
-        ocp.model.cost_expr_ext_cost_e = obj
-        ocp.cost.cost_ext_fun_type_e   = 'casadi'
+        # Define the objective function from CasADi parameters
+        r1 = Yf_cur @ g - yref              # (n_y*Np x 1): tracking error
+        r2 = Uf_cur @ g                     # (n_u*Np x 1): control effort
+        r3 = Yp_cur @ g - yini              # (n_y*Tini x 1): init‐condition slack - Y
+        r4 = Up_cur @ g - uini              # (n_u*Tini x 1): init‐condition slack - U
+        r5 = g                              # (n_g    x 1): regularization
+        print(f'The shape of r1:{r1.shape}, r2:{r2.shape},r3:{r3.shape},r4:{r4.shape},r5:{r5.shape}')
+        res = cs.vertcat(r1, r2, r3, r4, r5)
+        # ocp.cost.cost_type = 'LINEAR_LS'        # For the LINEAR_LS, the weight matrix should be np array instead of casadi matrix, so should use "EXTERNAL" instead
+        H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + + Up_cur.T @ lambda_u @ Up_cur + lambda_g
+        f = - Yp_cur.T @ lambda_y @ yini - Yf_cur.T @ Q @ yref  # - self.Uf.T @ self.R @ uref
+        obj = 0.5 * cs.mtimes(cs.mtimes(g.T, H), g) + cs.mtimes(f.T, g)
+        ocp.cost.cost_type = 'EXTERNAL'
+        ocp.cost.cost_type_e = 'EXTERNAL'
+        model.cost_expr_ext_cost   = obj
+        model.cost_expr_ext_cost_e = obj
 
         if ineq_flag:
             # — build a single SX vector h = [Hc@g; du]
+            h1 = cs.reshape(Hc @ g, (-1, 1))
+            h2 = cs.reshape(du,   (-1, 1))
+            h  = cs.vertcat(h1, h2)      # now definitely (n_rows, 1)
+            lh_arr = np.array(lbc_ineq)
+            uh_arr = np.array(ubc_ineq)
+            # print(f"h_sx size: ({h.size1()}×{h.size2()})")
+            # print(f"  → expr_h has {h.size1()} rows and {h.size2()} cols")
+            # print(f"  → lh   shape = {lh_arr.shape}")
+            # print(f"  → uh   shape = {uh_arr.shape}")
             ocp.constraints.constr_type = 'BGH'
-            ocp.constraints.expr_h      = vcat([ Hc @ g, du ])      # SX of shape (n_rows, 1)
-
+            ocp.dims.nh                 = h.shape[0]
+            ocp.model.con_h_expr        = h             # SX of shape (n_rows, 1)
             # — set matching numeric bounds: lh ≤ h(x,u) ≤ uh
-            ocp.constraints.lh          = np.array(lbc_ineq)        # shape = (n_rows,)
-            ocp.constraints.uh          = np.array(ubc_ineq)        # shape = (n_rows,)
-
+            ocp.constraints.lh          = lh_arr        # shape = (n_rows,)
+            ocp.constraints.uh          = uh_arr        # shape = (n_rows,)
         else:
             # — no constraints: empty h, empty bounds
             ocp.constraints.constr_type = 'BGH'
-            ocp.constraints.expr_h      = cs.SX.zeros(0, 1)            # zero-row SX
+            ocp.constraints.con_h_expr      = cs.SX.zeros(0, 1)            # zero-row SX
             ocp.constraints.lh          = np.zeros(0)
             ocp.constraints.uh          = np.zeros(0)
 
-        ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'       # also could try 'FULL_CONDENSING_QPOASES'
-        ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
-        ocp.solver_options.integrator_type = 'DISCRETE'                 # Using purely hankel-based styatic DeePC, best choice-'DISCRETE'. actual dynamic in OCP: 'ERK'-classic Runge-Kutta 4. Options: 'IRK', 'GNSF', 'LIFTED_IRK', 'DISCRETE
-        ocp.solver_options.nlp_solver_type = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
-        ocp.dims.N_horizon = self.Np                                            # number of shooting intervals = prediction steps
-        ocp.solver_options.tf = 1.0                                     # For s discrete dynamics, static QP in g, tf is unused - can leave it at the default(1.0)
+        # ocp.solver_options.qp_solver            = 'PARTIAL_CONDENSING_HPIPM' # also could try 'FULL_CONDENSING_QPOASES'
+        ocp.solver_options.qp_solver            = 'FULL_CONDENSING_QPOASES'
+        ocp.solver_options.hessian_approx       = 'GAUSS_NEWTON'
+        # ocp.solver_options.ext_cost_num_hess  = True                       # turn on numeric external cost Hessians
+        ocp.solver_options.integrator_type      = 'DISCRETE'                 # Using purely hankel-based styatic DeePC, best choice-'DISCRETE'. actual dynamic in OCP: 'ERK'-classic Runge-Kutta 4. Options: 'IRK', 'GNSF', 'LIFTED_IRK', 'DISCRETE
+        ocp.solver_options.nlp_solver_type      = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
+        ocp.dims.N                              = self.Np                    # number of shooting intervals = prediction steps
+        ocp.solver_options.tf                   = 1.0                        # For s discrete dynamics, static QP in g, tf is unused - can leave it at the default(1.0)
 
         # Initilize g and all the parameters with zero for acados initial build, will update those parameters at run time
-        n_p = ocp.model.p.numel()           # total number of entries in the SX parameter vector
-        ocp.parameter_values = np.zeros(n_p)  # or fill with your actual parameter data
+        n_p = ocp.model.p.numel()                                           # total number of entries in the SX parameter vector
+        ocp.parameter_values = np.zeros(n_p)                                # or fill with your actual parameter data
         self.solver = AcadosOcpSolver(ocp, json_file = 'DeePC_acados_ocp.json')
 
     @timer

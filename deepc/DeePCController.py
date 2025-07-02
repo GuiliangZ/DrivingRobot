@@ -76,9 +76,9 @@ if __name__ == "__main__":
     y_dim       = 1                                   # the dimension of controlled outputs - DR case: 1 -Dyno speed output
     # s = 1                                           # How many steps before we solve again the DeePC problem - how many control input used per iteration
     # DeePC related hyperparameters to tune
-    Tini        = 50                                  # Size of the initial set of data       - 0.5s(5s) bandwidth
-    THorizon    = 50                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth
-    hankel_subB_size = 299                            # hankel sub-Block column size at each run-time step !!! very important hyperparameter to tune. When 
+    Tini        = 5                                  # Size of the initial set of data       - 0.5s(5s) bandwidth
+    THorizon    = 5                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth
+    hankel_subB_size = 29                           # hankel sub-Block column size at each run-time step !!! very important hyperparameter to tune. When 
     Q_val = 1
     R_val = 1
     lambda_g_val= 10
