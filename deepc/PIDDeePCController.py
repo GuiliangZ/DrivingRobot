@@ -76,9 +76,9 @@ if __name__ == "__main__":
     y_dim       = 1                                   # the dimension of controlled outputs - DR case: 1 -Dyno speed output
     # s = 1                                           # How many steps before we solve again the DeePC problem - how many control input used per iteration
     # DeePC related hyperparameters to tune
-    Tini        = 2                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-    THorizon    = 2                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-    hankel_subB_size = 9                            # hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+    Tini        = 20                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
+    THorizon    = 20                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+    hankel_subB_size = 99                            # hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
     Q_val = 10                                         # the weighting matrix of controlled outputs y
     R_val = 1                                         # the weighting matrix of control inputs u
     lambda_g_val= 1                                  # the weighting matrix of norm of operator g
@@ -177,6 +177,8 @@ if __name__ == "__main__":
         veh_can_thread.start()
 
     # ─── System Setup ────────────────────────────────────────────────
+    T_f = 5000.0                # Derivative filter coefficient. Formula uses: D_f[k] = D_f[k-1] + (T_s / (T_s + T_f)) * (D_k - D_f[k-1])
+    FeedFwdTime = 0.65          # feedforward reference speed time
     base_folder = ""
     all_cycles = load_drivecycle_mat_files(base_folder) # Load reference cycle from .mat(s)
     cycle_keys = choose_cycle_key(all_cycles)           # Prompt the user to choose multiple drive cycles the user wish to test
@@ -216,6 +218,8 @@ if __name__ == "__main__":
         # -----------------Reset states--------------------------------------------------------------------------------------
         hankel_idx     = 0
         prev_error     = 0.0
+        I_state        = 0.0
+        D_f_state      = 0.0
         u_prev         = 0.0
         g_prev         = None                                           # Record DeePC decision matrix g for solver hot start   
         prev_ref_speed = None                                           # Track previous reference speed 
@@ -246,22 +250,51 @@ if __name__ == "__main__":
                     break
                 else:
                     rspd_now = float(np.interp(elapsed_time, ref_time, ref_speed))
+                
+                t_future = elapsed_time + FeedFwdTime
+                if t_future <= ref_time[0]:
+                    rspd_fut = ref_speed[0]
+                elif t_future >= ref_time[-1]:
+                    rspd_fut = 0.0
+                else:
+                    rspd_fut = float(np.interp(t_future, ref_time, ref_speed))
 
                 # -- Interpolate reference speed for DeePC ref_horizon_speed -------------------------
-                t_future = elapsed_time + Ts * np.arange(THorizon)      # look 0.01 * THorizon s ahead of time
-                if t_future[-1] >= ref_time[-1]:                        # if the last future time is beyond your reference horizon...
-                    valid_mask = t_future <= ref_time[-1]               # build a boolean mask of all valid future times
+                t_future_hankel = elapsed_time + Ts * np.arange(THorizon)      # look 0.01 * THorizon s ahead of time
+                if t_future_hankel[-1] >= ref_time[-1]:                        # if the last future time is beyond your reference horizon...
+                    valid_mask = t_future_hankel <= ref_time[-1]               # build a boolean mask of all valid future times
                     THorizon = int(valid_mask.sum())                    # shrink THorizon to only those valid steps - !! Horizon will change in last few steps
-                    t_future = t_future[valid_mask]             
-                ref_horizon_speed = np.interp(t_future, ref_time, ref_speed)
+                    t_future_hankel = t_future_hankel[valid_mask]             
+                ref_horizon_speed = np.interp(t_future_hankel, ref_time, ref_speed)
                 ref_horizon_speed = ref_horizon_speed.reshape(-1, 1)
                 print(f"The ref_horizon_speed for DeePC with shape{ref_horizon_speed.shape} is: {ref_horizon_speed}")
                 
-                # ── Compute current error e[k] and future error e_fut[k] ────────
+                # ── Compute current error e[k] and future error e_fut[k] ────────────────────
                 v_meas = latest_speed if latest_speed is not None else 0.0
                 F_meas = latest_force if latest_force is not None else 0.0
                 e_k    = rspd_now - v_meas
-                
+                e_fut  = rspd_fut - v_meas
+
+                # ── Implementing Baseline PID controller ───────────────────────────────────
+                # in the matlab baseline code, need to convert both spderror and futureSpderror from kph to mph to choose PID gains
+                e_k = e_k * 0.621371
+                e_fut = e_fut * 0.621371
+                Kp, Ki, Kd, Kff = get_gains_for_speed(rspd_now)
+                P_term = Kp * e_k
+                D_k = Kd * (e_k - prev_error) / Ts
+                alpha = Ts / (Ts + T_f)
+                D_f_state = D_f_state + alpha * (D_k - D_f_state)
+                D_term = D_f_state
+                if v_meas > 0.1 and rspd_now > 0.1:
+                    I_state = I_state + Ki * Ts * e_k
+                    I_out   = I_state
+                else:
+                    # Freeze integrator, but force I_out = 0
+                    I_out = 0.0
+                    I_state = 0.0
+                FF_term = Kff * e_fut
+                u_PID = P_term + I_out + D_term + FF_term
+
                 # ── Implementing real time acados based solver for DeePC ────────
                 # if hankel_idx == DeePC_kickIn_time (initial time where DeePC kicks in): # At start: can build a local hankel matrix now, start to use DeePC
                 # if hankel_idx+THorizon >= DeePC_stop_time  # At the end, hankel matrix exceed the full length of reference data
@@ -272,9 +305,10 @@ if __name__ == "__main__":
                 # u_opt, g_opt, t_deepc = dpc.solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For CasADi NLP solver - Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
                 #                                         Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q_val, R_val=R_val,
                 #                                          lambda_g_val=lambda_g_val, lambda_y_val=lambda_y_val, lambda_u_val=lambda_u_val)         
+                u_DeePC = u_opt[0]
 
                 # ──  Add a vehicle speed limiter safety feature (Theoretically don't need this part because all the control contraints are baked in the DeePC formulation) ────────
-                u_unclamped = u_opt[0]       
+                u_unclamped =        
                 u = float(np.clip(u_unclamped, -15.0, +100.0))          # Total output u[k], clipped to [-15, +100]
                 lower_bound = u_prev - max_delta
                 upper_bound = u_prev + max_delta                        # Allow u to move by at most ±max_delta from the previous cycle:
@@ -295,7 +329,8 @@ if __name__ == "__main__":
                 print(
                     f"[{elapsed_time:.3f}] "
                     f"v_ref={rspd_now:6.2f} kph, "
-                    f"v_meas={v_meas:6.2f} kph, e={e_k:+6.2f} kph,"
+                    f"v_meas={v_meas:6.2f} kph, e={e_k:+6.2f} kph, e_fut={e_fut:+6.2f} kph,"
+                    f"P={P_term:+6.2f}, I={I_out:+6.2f}, D={D_term:+6.2f}, FF={FF_term:+6.2f}, "
                     f"u={u:+6.2f}%,"
                     f"F_dyno={F_meas:6.2f} N,"
                     f"BMS_socMin={BMS_socMin:6.2f} %,"
@@ -328,7 +363,15 @@ if __name__ == "__main__":
                     "t_deepc":   t_deepc,
                     "BMS_socMin":BMS_socMin,
                     "SOC_CycleStarting":SOC_CycleStarting,
-
+                    "error_fut": e_fut,
+                    "P_term":    P_term,
+                    "I_term":    I_out,
+                    "D_term":    D_term,
+                    "FF_term":   FF_term,
+                    "Kp":        Kp,
+                    "Ki":        Ki,
+                    "Kd":        Kd,
+                    "Kff":       Kff,
                 })
                 if BMS_socMin <= SOC_Stop:
                     break

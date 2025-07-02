@@ -264,9 +264,10 @@ class deepctools():
             ocp.constraints.lh          = np.zeros(0)
             ocp.constraints.uh          = np.zeros(0)
 
-        # ocp.solver_options.qp_solver            = 'PARTIAL_CONDENSING_HPIPM' # also could try 'FULL_CONDENSING_QPOASES'
-        ocp.solver_options.qp_solver            = 'FULL_CONDENSING_QPOASES'
-        ocp.solver_options.hessian_approx       = 'GAUSS_NEWTON'
+        ocp.solver_options.qp_solver            = 'PARTIAL_CONDENSING_HPIPM' # also could try 'FULL_CONDENSING_QPOASES'
+        # ocp.solver_options.qp_solver            = "FULL_CONDENSING_HPIPM"
+        # ocp.solver_options.qp_solver            = 'FULL_CONDENSING_QPOASES'
+        ocp.solver_options.hessian_approx       = 'EXACT'                    # 'GAUSS_NEWTON' for "LINEAR_LS" cost_type
         # ocp.solver_options.ext_cost_num_hess  = True                       # turn on numeric external cost Hessians
         ocp.solver_options.integrator_type      = 'DISCRETE'                 # Using purely hankel-based styatic DeePC, best choice-'DISCRETE'. actual dynamic in OCP: 'ERK'-classic Runge-Kutta 4. Options: 'IRK', 'GNSF', 'LIFTED_IRK', 'DISCRETE
         ocp.solver_options.nlp_solver_type      = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
