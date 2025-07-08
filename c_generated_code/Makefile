@@ -138,8 +138,8 @@ ocp_cython_o: ocp_cython_c
 	-I $(INCLUDE_PATH)/blasfeo/include/ \
 	-I $(INCLUDE_PATH)/hpipm/include/ \
 	-I $(INCLUDE_PATH) \
-	-I /home/guiliang/miniforge3/envs/myenv/lib/python3.10/site-packages/numpy/_core/include \
-	-I /home/guiliang/miniforge3/envs/myenv/include/python3.10 \
+	-I /home/guiliang/anaconda3/envs/drivingRobot/lib/python3.13/site-packages/numpy/_core/include \
+	-I /home/guiliang/anaconda3/envs/drivingRobot/include/python3.13 \
 	acados_ocp_solver_pyx.c \
 
 ocp_cython: ocp_cython_o

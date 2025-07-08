@@ -120,7 +120,7 @@ class deepctools():
                 ctools.entry('Yf',   shape=tuple([self.y_dim * self.Np, self.g_dim])),
                 ctools.entry('lambda_g', shape=tuple([self.g_dim,       self.g_dim ])),
                 ctools.entry('lambda_y', shape=tuple([self.y_dim*self.Tini,       self.y_dim*self.Tini ])),
-                ctools.entry('lambda_u', shape=tuple([self.u_dim*self.Tini,       self.u_dim*self.Tini ])),
+                # ctools.entry('lambda_u', shape=tuple([self.u_dim*self.Tini,       self.u_dim*self.Tini ])),
                 # tracking‐error weight and regularization scalar
                 ctools.entry('Q',        shape=tuple([self.y_dim * self.Np,    self.y_dim * self.Np])),  # diagonal entries of Q
                 ctools.entry('R',        shape=tuple([self.u_dim * self.Np,    self.u_dim * self.Np])),  # scalar weight on g-regularization
@@ -190,7 +190,8 @@ class deepctools():
             raise ValueError(f'OCP do not have enough degrees of freedom | Should: g_dim > (u_dim + y_dim) * Tini, but got: {self.g_dim} <= {(self.u_dim + self.y_dim) * self.Tini}!')
 
         # define parameters and decision variable
-        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]
+        # uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]
+        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, Q, R = self.parameters[...]
         g, = self.optimizing_target[...]  # data are stored in list [], notice that ',' cannot be missed
 
         # To get du
@@ -213,7 +214,7 @@ class deepctools():
             cs.reshape(Uf_cur, -1, 1),
             cs.reshape(Yf_cur, -1, 1),
             cs.reshape(Q, -1, 1), cs.reshape(R, -1, 1),
-            cs.reshape(lambda_y, -1, 1), cs.reshape(lambda_u, -1, 1), cs.reshape(lambda_g, -1, 1),
+            cs.reshape(lambda_y, -1, 1), cs.reshape(lambda_g, -1, 1), #cs.reshape(lambda_u, -1, 1), 
         )
         model.disc_dyn_expr = model.x          # shape (g_dim, 1) # zero‐dynamics: ẋ = 0. # Using purely hankel-based styatic DeePC - In this setup you’re treating your entire decision vector g as a “state” with zero dynamics so that Acados turns your one‐step OCP into a pure static QP
 
@@ -232,7 +233,8 @@ class deepctools():
         print(f'The shape of r1:{r1.shape}, r2:{r2.shape},r3:{r3.shape},r4:{r4.shape},r5:{r5.shape}')
         res = cs.vertcat(r1, r2, r3, r4, r5)
         # ocp.cost.cost_type = 'LINEAR_LS'        # For the LINEAR_LS, the weight matrix should be np array instead of casadi matrix, so should use "EXTERNAL" instead
-        H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + + Up_cur.T @ lambda_u @ Up_cur + lambda_g
+        # H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + Up_cur.T @ lambda_u @ Up_cur + lambda_g
+        H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + lambda_g
         f = - Yp_cur.T @ lambda_y @ yini - Yf_cur.T @ Q @ yref  # - self.Uf.T @ self.R @ uref
         obj = 0.5 * cs.mtimes(cs.mtimes(g.T, H), g) + cs.mtimes(f.T, g)
         ocp.cost.cost_type = 'EXTERNAL'
@@ -320,7 +322,8 @@ class deepctools():
             raise ValueError(f'NLP do not have enough degrees of freedom | Should: g_dim > (u_dim + y_dim) * Tini, but got: {self.g_dim} <= {(self.u_dim + self.y_dim) * self.Tini}!')
 
         # define parameters and decision variable
-        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]
+        # uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]
+        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, Q, R = self.parameters[...]
         g, = self.optimizing_target[...]  # data are stored in list [], notice that ',' cannot be missed
 
         # To get du
@@ -416,7 +419,8 @@ class deepctools():
         if self.g_dim <= self.u_dim * self.Tini:
             raise ValueError(f'NLP do not have enough degrees of freedom | Should: g_dim >= u_dim * Tini, but got: {self.g_dim} <= {self.u_dim * self.Tini}!')
 
-        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]      # define parameters and decision variable
+        # uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]      # define parameters and decision variable
+        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, Q, R = self.parameters[...]
         g, = self.optimizing_target[...]  # data are stored in list [], notice that ',' cannot be missed
 
         if lambda_g is None or lambda_y is None:
@@ -471,71 +475,8 @@ class deepctools():
         self.lbc = lbc
         self.ubc = ubc
 
-    @timer
-    def init_FullRDeePCsolver(self, uloss='u', ineqconidx=None, ineqconbd=None, opts={}):
-        """
-            Add both Yp and Up slack variables in RDeePCsolver, where RDeePCsolver only have Yp as slack variable
-        """
-        print('>>Full Robust DeePC design formulating.. This may take a while...')
-        if uloss not in ["u", "du"]:
-            raise ValueError("uloss should be one of: 'u', 'du'!")
-        if self.g_dim <= self.u_dim * self.Tini:
-            raise ValueError(f'NLP do not have enough degrees of freedom | Should: g_dim >= u_dim * Tini, but got: {self.g_dim} <= {self.u_dim * self.Tini}!')
-
-        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]      # define parameters and decision variable
-        g, = self.optimizing_target[...]  # data are stored in list [], notice that ',' cannot be missed
-
-        if lambda_g is None or lambda_y is None:
-            raise ValueError(
-                "Do not give value of 'lambda_g' or 'lambda_y', but required in objective function for Robust DeePC!")
-
-        u_cur = cs.mtimes(Uf_cur, g)
-        u_prev = cs.vertcat(uini[-self.u_dim:], cs.mtimes(Uf_cur, g)[:-self.u_dim])
-        du = u_cur - u_prev
-        ## J  =  || Uf * g - ys ||_Q^2 + || uloss ||_R^2 + lambda_y || Yp * g - yini||_2^2 + lambda_g || g ||_2^2
-        ## s.t.   Up * g = uini - only hard constrain on Up
-        ##        ulb <= u <= uub
-
-        ## objective function
-        if uloss == 'u':
-            
-            ## QP problem
-            H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + + Up_cur.T @ lambda_u @ Up_cur + lambda_g
-            f = - Yp_cur.T @ lambda_y @ yini - Yf_cur.T @ Q @ yref  # - self.Uf.T @ self.R @ uref
-            obj = 0.5 * cs.mtimes(cs.mtimes(g.T, H), g) + cs.mtimes(f.T, g)
-
-        if uloss == 'du':
-
-            ## Not a QP problem
-            y = cs.mtimes(Yf_cur, g)
-            y_loss = y - yref
-
-            sigma_y = cs.mtimes(Yp_cur, g) - yini
-            sigma_u = cs.mtimes(Up_cur, g) - uini
-            obj = cs.mtimes(cs.mtimes(y_loss.T, Q), y_loss) + cs.mtimes(cs.mtimes(du.T, R), du) + cs.mtimes(
-                cs.mtimes(g.T, lambda_g), g) + cs.mtimes(cs.mtimes(sigma_y.T, lambda_y), sigma_y) + cs.mtimes(cs.mtimes(sigma_u.T, lambda_u), sigma_u)
-        
-        #### constrains
-        # init inequality constrains
-        Hc, lbc_ineq, ubc_ineq, ineq_flag = self._init_ineq_cons(ineqconidx, ineqconbd, Up_cur, Yp_cur, du)
-        C = []
-        lbc, ubc = [], []
-        # equal constrains:  No hard equality constrains
-        # inequality constrains:    ulb <= Uf_u * g <= uub 
-        if ineq_flag:
-            C += [cs.mtimes(Hc, g)]
-            C += [du]
-            lbc.extend(lbc_ineq)
-            ubc.extend(ubc_ineq)
-        
-        # formulate the nlp prolbem
-        nlp_prob = {'f': obj, 'x': self.optimizing_target, 'p': self.parameters, 'g': cs.vertcat(*C)}
-
-        self.solver = cs.nlpsol('solver', 'ipopt', nlp_prob, opts)
-        self.lbc = lbc
-        self.ubc = ubc
-
-    def solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val):
+    # def solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val):
+    def solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val):
         """
             solver solve the nlp for one time
             uini, yini:  [array]   | (dim*Tini, 1)
@@ -549,7 +490,8 @@ class deepctools():
 
         if yref is None:
             raise ValueError("Did not give value of 'yref', but required in objective function!")
-        parameters = np.concatenate((uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val))
+        # parameters = np.concatenate((uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val))
+        parameters = np.concatenate((uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val))
         g0_guess = np.linalg.pinv(np.concatenate((Up_cur, Yp_cur), axis=0)) @ np.concatenate((uini, yini))
 
         t_ = time.time()
@@ -561,7 +503,8 @@ class deepctools():
         return u_opt, g_opt, t_s
 
 
-    def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val, g_prev=None):
+    # def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val, g_prev=None):
+    def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, g_prev=None):
         """
             solver solve the nlp for one time
             uini, yini:  [array]   | (dim*Tini, 1)
@@ -580,11 +523,20 @@ class deepctools():
             Up_cur.ravel(), Yp_cur.ravel(),
             Uf_cur.ravel(), Yf_cur.ravel(),
             Q_val.ravel(),    R_val.ravel(),
-            lambda_g_val.ravel(),   lambda_y_val.ravel(),   lambda_u_val.ravel(),
+            lambda_g_val.ravel(),   lambda_y_val.ravel(),   # lambda_u_val.ravel(),
         ])
 
         # give acados initial guess
-        g_default = np.linalg.pinv(np.vstack([Up_cur, Yp_cur])) @ np.vstack([uini, yini])       #psuedo-inverse to get g_default initial hot-start guess
+        # # stack your prediction matrices row-wise:
+        # A = np.vstack([Up_cur, Yp_cur])             # shape ((u_dim+y_dim)*Tini,  g_dim)
+        # # stack your data vectors:
+        # b = np.vstack([uini, yini]).ravel()         # shape ((u_dim+y_dim)*Tini,)
+
+        # # solve the (unregularized) least-squares problem
+        # g_default, *_ = np.linalg.lstsq(A, b, rcond=None)
+        # # g_default is now a 1-D array of length g_dim
+        # g_default = g_default.ravel()   
+        g_default = np.linalg.pinv(np.vstack([Up_cur, Yp_cur, Yf_cur])) @ np.vstack([uini, yini, yref])       #psuedo-inverse to get g_default initial hot-start guess
         g_default = g_default.ravel()
 
         # choose hot-start if available
@@ -596,10 +548,76 @@ class deepctools():
         self.solver.set( 0, "x", g0)
         self.solver.set( 0, "p", parameters )
 
-        t0 = cs.time()
+        t0 = time.time()
         sol = self.solver.solve()
-        t_s = float(cs.time() - t0)
+        t_s = float(time.time()-t0)
 
         g_opt = self.solver.get(0,"x")
         u_opt = Uf_cur @ g_opt              # which is same as np.matmul(Uf_cur, g_opt)
         return u_opt, g_opt, t_s
+    
+
+# Adding lambda_u feature for dealing noisy u input
+    # @timer
+    # def init_FullRDeePCsolver(self, uloss='u', ineqconidx=None, ineqconbd=None, opts={}):
+    #     """
+    #         Add both Yp and Up slack variables in RDeePCsolver, where RDeePCsolver only have Yp as slack variable
+    #     """
+    #     print('>>Full Robust DeePC design formulating.. This may take a while...')
+    #     if uloss not in ["u", "du"]:
+    #         raise ValueError("uloss should be one of: 'u', 'du'!")
+    #     if self.g_dim <= self.u_dim * self.Tini:
+    #         raise ValueError(f'NLP do not have enough degrees of freedom | Should: g_dim >= u_dim * Tini, but got: {self.g_dim} <= {self.u_dim * self.Tini}!')
+
+    #     uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]      # define parameters and decision variable
+    #     g, = self.optimizing_target[...]  # data are stored in list [], notice that ',' cannot be missed
+
+    #     if lambda_g is None or lambda_y is None:
+    #         raise ValueError(
+    #             "Do not give value of 'lambda_g' or 'lambda_y', but required in objective function for Robust DeePC!")
+
+    #     u_cur = cs.mtimes(Uf_cur, g)
+    #     u_prev = cs.vertcat(uini[-self.u_dim:], cs.mtimes(Uf_cur, g)[:-self.u_dim])
+    #     du = u_cur - u_prev
+    #     ## J  =  || Uf * g - ys ||_Q^2 + || uloss ||_R^2 + lambda_y || Yp * g - yini||_2^2 + lambda_g || g ||_2^2
+    #     ## s.t.   Up * g = uini - only hard constrain on Up
+    #     ##        ulb <= u <= uub
+
+    #     ## objective function
+    #     if uloss == 'u':
+            
+    #         ## QP problem
+    #         H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + Up_cur.T @ lambda_u @ Up_cur + lambda_g
+    #         f = - Yp_cur.T @ lambda_y @ yini - Yf_cur.T @ Q @ yref  # - self.Uf.T @ self.R @ uref
+    #         obj = 0.5 * cs.mtimes(cs.mtimes(g.T, H), g) + cs.mtimes(f.T, g)
+
+    #     if uloss == 'du':
+
+    #         ## Not a QP problem
+    #         y = cs.mtimes(Yf_cur, g)
+    #         y_loss = y - yref
+
+    #         sigma_y = cs.mtimes(Yp_cur, g) - yini
+    #         sigma_u = cs.mtimes(Up_cur, g) - uini
+    #         obj = cs.mtimes(cs.mtimes(y_loss.T, Q), y_loss) + cs.mtimes(cs.mtimes(du.T, R), du) + cs.mtimes(
+    #             cs.mtimes(g.T, lambda_g), g) + cs.mtimes(cs.mtimes(sigma_y.T, lambda_y), sigma_y) + cs.mtimes(cs.mtimes(sigma_u.T, lambda_u), sigma_u)
+        
+    #     #### constrains
+    #     # init inequality constrains
+    #     Hc, lbc_ineq, ubc_ineq, ineq_flag = self._init_ineq_cons(ineqconidx, ineqconbd, Up_cur, Yp_cur, du)
+    #     C = []
+    #     lbc, ubc = [], []
+    #     # equal constrains:  No hard equality constrains
+    #     # inequality constrains:    ulb <= Uf_u * g <= uub 
+    #     if ineq_flag:
+    #         C += [cs.mtimes(Hc, g)]
+    #         C += [du]
+    #         lbc.extend(lbc_ineq)
+    #         ubc.extend(ubc_ineq)
+        
+    #     # formulate the nlp prolbem
+    #     nlp_prob = {'f': obj, 'x': self.optimizing_target, 'p': self.parameters, 'g': cs.vertcat(*C)}
+
+    #     self.solver = cs.nlpsol('solver', 'ipopt', nlp_prob, opts)
+    #     self.lbc = lbc
+    #     self.ubc = ubc

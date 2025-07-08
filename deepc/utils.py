@@ -1,10 +1,10 @@
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
-import torch.optim as optim
+# import torch
+# import torch.nn as nn
+# from torch.utils.data import Dataset, DataLoader
+# from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
+# import torch.optim as optim
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
+# from sklearn.preprocessing import StandardScaler
 
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -17,8 +17,8 @@ import numpy as np
 import scipy.io as sio
 import pandas as pd
 
-import Jetson.GPIO as GPIO
-GPIO.cleanup()
+# import Jetson.GPIO as GPIO
+# GPIO.cleanup()
 
 import board
 import busio
@@ -28,6 +28,55 @@ import cantools
 import can
 import casadi as ca
 from acados_template import AcadosOcp, AcadosOcpSolver
+
+from smbus2 import SMBus
+
+# ——— CP2112 I²C setup ———
+CP2112_BUS   = 3         # e.g. /dev/i2c-3
+PCA9685_ADDR = 0x40      # default PCA9685 address
+# PCA9685 register addresses
+MODE1_REG    = 0x00
+PRESCALE_REG = 0xFE
+LED0_ON_L    = 0x06     # base address for channel 0
+
+def set_pwm(bus: SMBus, channel: int, percent: float, freq_hz: float = 1000.0):
+    """
+    Initialize PCA9685 (reset, set frequency) and set one channel’s duty cycle (0–100%).
+    Uses 12-bit resolution.
+    """
+    if not (0 <= channel <= 15):
+        raise ValueError("channel must be in 0..15")
+    if not (0.0 <= percent <= 100.0):
+        raise ValueError("percent must be between 0.0 and 100.0")
+
+    # 1) Compute prescale for desired freq
+    prescale_val = int(round(25_000_000.0 / (4096 * freq_hz) - 1))
+
+    # 2) Enter sleep mode to set prescaler
+    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x10)  # sleep
+    time.sleep(0.01)
+
+    # 3) Write prescaler
+    bus.write_byte_data(PCA9685_ADDR, PRESCALE_REG, prescale_val)
+    time.sleep(0.01)
+
+    # 4) Wake up and enable auto-increment
+    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x00)  # wake
+    time.sleep(0.01)
+    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0xA1)  # restart + autoinc
+    time.sleep(0.01)
+
+    # 5) Compute on/off counts for duty cycle
+    duty_count = int(percent * 4095 / 100)
+    on_l  = 0
+    on_h  = 0
+    off_l = duty_count & 0xFF
+    off_h = (duty_count >> 8) & 0x0F
+
+    # 6) Write [ON_L, ON_H, OFF_L, OFF_H] to the channel’s LED registers
+    reg = LED0_ON_L + 4 * channel
+    bus.write_i2c_block_data(PCA9685_ADDR, reg, [on_l, on_h, off_l, off_h])
+
 
 # ─────────────────────────── LOAD DRIVE-CYCLE .MAT ────────────────────────────
 def load_drivecycle_mat_files(base_folder: str):
@@ -267,6 +316,36 @@ def get_gains_for_speed(ref_speed: float):
 
     return (kp, ki, kd, kff)
 
+def get_gains_for_speed_slower_frequency(ref_speed: float, Ts: float):
+    """
+    This function is to adjust PID gains accordingly with change in system frequency Ts.
+    Return (Kp, Ki, Kd, Kff) according to the current reference speed (kph).
+
+    """
+    Ts_original = 0.01
+    mux = Ts_original/Ts
+    spd = ref_speed
+    kp_bp_spd = np.array([0,20,40,60,80,100,120,140], dtype=float)
+    kp_vals = np.array([6,7,8,9,9,10,10,10], dtype=float)
+    kp = float(np.interp(spd, kp_bp_spd, kp_vals))
+
+    ki_bp_spd = np.array([0,20,40,60,80,100,120,140], dtype=float)
+    ki_vals = np.array([1.5,1.6,1.7,1.9,2,2,2,2], dtype=float)
+    ki = float(np.interp(spd, ki_bp_spd, ki_vals))
+    ki = ki * mux
+
+    # The baseline code doesn't use kd, - now the kd_vals are wrong and random, adjust when needed
+    kd_bp_spd = np.array([0,20,40,60,80,100,120], dtype=float)
+    kd_vals = np.array([6,7,8,9,10,10,10], dtype=float)
+    kd = float(np.interp(spd, kd_bp_spd, kd_vals))
+    kd = 0
+
+    kff_bp_spd = np.array([0,3,4,60,80,100,120,140], dtype=float)
+    kff_vals = np.array([4,4,3,3,3,3,3,3], dtype=float)
+    kff = float(np.interp(spd, kff_bp_spd, kff_vals))
+
+    return (kp, ki, kd, kff)
+
 # ───────────────────────────── DeePC RELATED - HANKEL MATRIX ─────────────────────────────────
 def hankel(x, L):
     """
@@ -343,9 +422,10 @@ def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_id
     # how many columns on each side of hankel_idx we want
     g_dim = hankel_subB_size - Tini - THorizon + 1
 
-    # desired slice is [start:end] with width = end - start = 2*g_dim
-    start = hankel_idx - g_dim
-    end   = hankel_idx + g_dim
+    # desired slice is [start:end] with width = end - start = g_dim
+    half  = g_dim // 2
+    start = hankel_idx - half
+    end   = hankel_idx + half
     width = end - start
 
     # allocate zero‐padded output blocks

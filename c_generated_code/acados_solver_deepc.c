@@ -472,16 +472,34 @@ void deepc_acados_setup_nlp_in(deepc_solver_capsule* capsule, const int N, doubl
     {
         // set time_steps
     
-        double time_step = 0.5;
+        double time_step = 0.05;
         for (int i = 0; i < N; i++)
         {
             ocp_nlp_in_set(nlp_config, nlp_dims, nlp_in, i, "Ts", &time_step);
         }
         // set cost scaling
         double* cost_scaling = malloc((N+1)*sizeof(double));
-        cost_scaling[0] = 0.5;
-        cost_scaling[1] = 0.5;
-        cost_scaling[2] = 1;
+        cost_scaling[0] = 0.05;
+        cost_scaling[1] = 0.05;
+        cost_scaling[2] = 0.05;
+        cost_scaling[3] = 0.05;
+        cost_scaling[4] = 0.05;
+        cost_scaling[5] = 0.05;
+        cost_scaling[6] = 0.05;
+        cost_scaling[7] = 0.05;
+        cost_scaling[8] = 0.05;
+        cost_scaling[9] = 0.05;
+        cost_scaling[10] = 0.05;
+        cost_scaling[11] = 0.05;
+        cost_scaling[12] = 0.05;
+        cost_scaling[13] = 0.05;
+        cost_scaling[14] = 0.05;
+        cost_scaling[15] = 0.05;
+        cost_scaling[16] = 0.05;
+        cost_scaling[17] = 0.05;
+        cost_scaling[18] = 0.05;
+        cost_scaling[19] = 0.05;
+        cost_scaling[20] = 1;
         for (int i = 0; i <= N; i++)
         {
             ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, i, "scaling", &cost_scaling[i]);
@@ -559,14 +577,104 @@ void deepc_acados_setup_nlp_in(deepc_solver_capsule* capsule, const int N, doubl
     double* uh = luh + NH;
     lh[0] = -15;
     lh[1] = -15;
-    lh[4] = -10;
-    lh[5] = -10;
+    lh[2] = -15;
+    lh[3] = -15;
+    lh[4] = -15;
+    lh[5] = -15;
+    lh[6] = -15;
+    lh[7] = -15;
+    lh[8] = -15;
+    lh[9] = -15;
+    lh[10] = -15;
+    lh[11] = -15;
+    lh[12] = -15;
+    lh[13] = -15;
+    lh[14] = -15;
+    lh[15] = -15;
+    lh[16] = -15;
+    lh[17] = -15;
+    lh[18] = -15;
+    lh[19] = -15;
+    lh[40] = -10;
+    lh[41] = -10;
+    lh[42] = -10;
+    lh[43] = -10;
+    lh[44] = -10;
+    lh[45] = -10;
+    lh[46] = -10;
+    lh[47] = -10;
+    lh[48] = -10;
+    lh[49] = -10;
+    lh[50] = -10;
+    lh[51] = -10;
+    lh[52] = -10;
+    lh[53] = -10;
+    lh[54] = -10;
+    lh[55] = -10;
+    lh[56] = -10;
+    lh[57] = -10;
+    lh[58] = -10;
+    lh[59] = -10;
     uh[0] = 100;
     uh[1] = 100;
-    uh[2] = 140;
-    uh[3] = 140;
-    uh[4] = 1.2;
-    uh[5] = 1.2;
+    uh[2] = 100;
+    uh[3] = 100;
+    uh[4] = 100;
+    uh[5] = 100;
+    uh[6] = 100;
+    uh[7] = 100;
+    uh[8] = 100;
+    uh[9] = 100;
+    uh[10] = 100;
+    uh[11] = 100;
+    uh[12] = 100;
+    uh[13] = 100;
+    uh[14] = 100;
+    uh[15] = 100;
+    uh[16] = 100;
+    uh[17] = 100;
+    uh[18] = 100;
+    uh[19] = 100;
+    uh[20] = 140;
+    uh[21] = 140;
+    uh[22] = 140;
+    uh[23] = 140;
+    uh[24] = 140;
+    uh[25] = 140;
+    uh[26] = 140;
+    uh[27] = 140;
+    uh[28] = 140;
+    uh[29] = 140;
+    uh[30] = 140;
+    uh[31] = 140;
+    uh[32] = 140;
+    uh[33] = 140;
+    uh[34] = 140;
+    uh[35] = 140;
+    uh[36] = 140;
+    uh[37] = 140;
+    uh[38] = 140;
+    uh[39] = 140;
+    uh[40] = 1.2;
+    uh[41] = 1.2;
+    uh[42] = 1.2;
+    uh[43] = 1.2;
+    uh[44] = 1.2;
+    uh[45] = 1.2;
+    uh[46] = 1.2;
+    uh[47] = 1.2;
+    uh[48] = 1.2;
+    uh[49] = 1.2;
+    uh[50] = 1.2;
+    uh[51] = 1.2;
+    uh[52] = 1.2;
+    uh[53] = 1.2;
+    uh[54] = 1.2;
+    uh[55] = 1.2;
+    uh[56] = 1.2;
+    uh[57] = 1.2;
+    uh[58] = 1.2;
+    uh[59] = 1.2;
 
     for (int i = 1; i < N; i++)
     {
@@ -652,7 +760,7 @@ static void deepc_acados_create_set_opts(deepc_solver_capsule* capsule)
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "levenberg_marquardt", &levenberg_marquardt);
 
     /* options QP solver */
-    int qp_solver_cond_N;const int qp_solver_cond_N_ori = 2;
+    int qp_solver_cond_N;const int qp_solver_cond_N_ori = 20;
     qp_solver_cond_N = N < qp_solver_cond_N_ori ? N : qp_solver_cond_N_ori; // use the minimum value here
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_cond_N", &qp_solver_cond_N);
 
@@ -878,7 +986,7 @@ int deepc_acados_update_params(deepc_solver_capsule* capsule, int stage, double 
 {
     int solver_status = 0;
 
-    int casadi_np = 106;
+    int casadi_np = 7760;
     if (casadi_np != np) {
         printf("acados_update_params: trying to set %i parameters for external functions."
             " External function has %i parameters. Exiting.\n", np, casadi_np);
@@ -1008,7 +1116,13 @@ void deepc_acados_print_stats(deepc_solver_capsule* capsule)
     ocp_nlp_get(capsule->nlp_solver, "stat_m", &stat_m);
 
 
-    double stat[1200];
+    int stat_n_max = 16;
+    if (stat_n > stat_n_max)
+    {
+        printf("stat_n_max = %d is too small, increase it in the template!\n", stat_n_max);
+        exit(1);
+    }
+    double stat[1600];
     ocp_nlp_get(capsule->nlp_solver, "statistics", stat);
 
     int nrow = nlp_iter+1 < stat_m ? nlp_iter+1 : stat_m;
