@@ -1,3 +1,4 @@
 *.xlsx
 *.npzdeepc/dataForHankle/hankel_dataset.npz
 deepc/dataForHankle/hankel_dataset.npz
+*.npz
