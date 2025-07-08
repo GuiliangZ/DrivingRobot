@@ -45,8 +45,106 @@ latest_force = None                                 # Measured force (N) from CA
 dyno_can_running  = True                            # Flag to stop the CAN thread on shutdown
 veh_can_running  = True 
 BMS_socMin = None                                   # Measured current vehicle SOC from Vehicle CAN
-dyno_can_running  = False                           # For temperal debugging
-veh_can_running  = False 
+# dyno_can_running  = False                           # For temperal debugging
+# veh_can_running  = False 
+CP2112_BUS   = 12         # e.g. /dev/i2c-3
+
+# ──────────────────────────── CAN LISTENER THREAD ──────────────────────────────
+def dyno_can_listener_thread(dbc_path: str, can_iface: str):
+    """
+    Runs in a background thread. Listens for 'Speed_and_Force' on can_iface,
+    decodes it using KAVL_V3.dbc, and updates globals latest_speed & latest_force.
+    """
+    global latest_speed, latest_force, dyno_can_running
+
+    try:
+        db = cantools.database.load_file(dbc_path)
+    except FileNotFoundError:
+        print(f"[CAN⋅Thread] ERROR: Cannot find DBC at '{dbc_path}'. Exiting CAN thread.")
+        return
+
+    try:
+        speed_force_msg = db.get_message_by_name('Speed_and_Force')
+    except KeyError:
+        print("[CAN⋅Thread] ERROR: 'Speed_and_Force' not found in DBC. Exiting CAN thread.")
+        return
+
+    try:
+        bus = can.interface.Bus(channel=can_iface, interface='socketcan')
+    except OSError:
+        print(f"[CAN⋅Thread] ERROR: Cannot open CAN interface '{can_iface}'. Exiting CAN thread.")
+        return
+
+    print(f"[CAN⋅Thread] Listening on {can_iface} for ID=0x{speed_force_msg.frame_id:03X}…")
+    while dyno_can_running:
+        msg = bus.recv(timeout=1.0)
+        if msg is None:
+            continue
+        if msg.arbitration_id != speed_force_msg.frame_id:
+            continue
+        try:
+            decoded = db.decode_message(msg.arbitration_id, msg.data)
+        except KeyError:
+            continue
+
+        s = decoded.get('Speed_kph')
+        f = decoded.get('Force_N')
+        if s is not None:
+            if -0.1 < s < 0.1:
+                latest_speed = int(round(s))
+            else:
+                latest_speed = float(s)
+        if f is not None:
+            latest_force = float(f)
+
+    bus.shutdown()
+    print("[CAN⋅Thread] Exiting CAN thread.")
+
+def veh_can_listener_thread(dbc_path: str, can_iface: str):
+    """
+    Runs in a background thread. Listens for 'BMS_socMin' on can_iface,
+    decodes it using vehBus.dbc, and updates globals BMS_socMin.
+    """
+    global BMS_socMin, veh_can_running
+
+    try:
+        db = cantools.database.load_file(dbc_path)
+    except FileNotFoundError:
+        print(f"[CAN⋅Thread] ERROR: Cannot find DBC at '{dbc_path}'. Exiting CAN thread.")
+        return
+
+    try:
+        bms_soc_msg = db.get_message_by_name('BMS_socStatus')
+    except KeyError:
+        print("[CAN⋅Thread] ERROR: 'BMS_socStatus' not found in DBC. Exiting CAN thread.")
+        return
+
+    try:
+        bus = can.interface.Bus(channel=can_iface, interface='socketcan')
+    except OSError:
+        print(f"[CAN⋅Thread] ERROR: Cannot open CAN interface '{can_iface}'. Exiting CAN thread.")
+        return
+
+    print(f"[CAN⋅Thread] Listening on {can_iface} for ID=0x{bms_soc_msg.frame_id:03X}…")
+    while veh_can_running:
+        msg = bus.recv(timeout=3.0)
+        if msg is None:
+            continue
+        if msg.arbitration_id != bms_soc_msg.frame_id:
+            continue
+        try:
+            decoded = db.decode_message(msg.arbitration_id, msg.data)
+        except KeyError:
+            continue
+
+        BMS_socMin = decoded.get('BMS_socMin')
+        if BMS_socMin is not None:
+            if BMS_socMin <= 2:
+                BMS_socMin = int(round(BMS_socMin))
+            else:
+                BMS_socMin = float(BMS_socMin)
+    bus.shutdown()
+    print("[CAN⋅Thread] Exiting CAN thread.")
 
 # ─────────────────────────────── MAIN CONTROL ─────────────────────────────────
 if __name__ == "__main__":
@@ -85,8 +183,8 @@ if __name__ == "__main__":
     hankel_subB_size = 89                             # hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
     Q_val = 10                                        # the weighting matrix of controlled outputs y
     R_val = 1                                         # the weighting matrix of control inputs u
-    lambda_g_val = 1                                  # the weighting matrix of norm of operator g
-    lambda_y_val = 3                                  # the weighting matrix of mismatch of controlled output y
+    lambda_g_val = 10                                  # the weighting matrix of norm of operator g
+    lambda_y_val = 10                                  # the weighting matrix of mismatch of controlled output y
     # lambda_u_val= 10                                # the weighting matrix of mismatch of controlled output u
     T           = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
     g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
@@ -96,6 +194,10 @@ if __name__ == "__main__":
         print(f"[Main] Using cached hankel matrix data from {CACHE_FILE_HANKEL_DATA}")
         npz_hankel = np.load(CACHE_FILE_HANKEL_DATA)
         Up, Uf, Yp, Yf = npz_hankel['Up'], npz_hankel['Uf'], npz_hankel['Yp'], npz_hankel['Yf']
+        # print(f"Up_cur shape{Up.shape} value: {Up}, "
+        # f"Uf_cur shape{Uf.shape} value: {Uf}, "
+        # f"Yp_cur shape{Yp.shape} value: {Yp}, "
+        # f"Yf_cur shape{Uf.shape} value: {Uf}, ")
     else:
         print("[Main] Start to make hankel matrix data from cache... this may take a while")
         Up, Uf, Yp, Yf = hankel_full(ud, yd, Tini, THorizon)
@@ -140,9 +242,9 @@ if __name__ == "__main__":
 
     # ─── START CAN LISTENER THREAD ───────────────────────────────────────────────
     DYNO_DBC_PATH = '/home/guiliang/Desktop/DrivingRobot/KAVL_V3.dbc'
-    DYNO_CAN_INTERFACE = 'can1'
+    DYNO_CAN_INTERFACE = 'can0'
     VEH_DBC_PATH = '/home/guiliang/Desktop/DrivingRobot/vehBus.dbc'
-    VEH_CAN_INTERFACE = 'can2'
+    VEH_CAN_INTERFACE = 'can1'
     if dyno_can_running:
         dyno_can_thread = threading.Thread(
             target=dyno_can_listener_thread,
@@ -170,6 +272,10 @@ if __name__ == "__main__":
             break
         else:
             SOC_CycleStarting = BMS_socMin
+            if SOC_CycleStarting is not None:
+                SOC_CycleStarting = round(SOC_CycleStarting, 2)
+            else:
+                SOC_CycleStarting = 0.0
 
         # ----------------Loading current cycle data----------------------------------------------------------------------
         cycle_data = all_cycles[cycle_key]
@@ -201,18 +307,21 @@ if __name__ == "__main__":
         y_init = np.array(spd_history).reshape(-1, 1)
         log_data       = []                                             # Prepare logging
         # Record loop‐start time so we can log elapsed time from 0.0
-        next_time      = time.time()
-        now            = time.time()
+        next_time      = time.perf_counter()
+        t0             = time.perf_counter()
         print(f"\n[Main] Starting cycle '{cycle_key}' on {veh_modelName}, duration={ref_time[-1]:.2f}s")
 
     # ─── MAIN 100 Hz CONTROL LOOP ─────────────────────────────────────────────────
         print("[Main] Entering 100 Hz control loop. Press Ctrl+C to exit.\n")
         try:
             while True:
-                now = time.time()
-                if now < next_time:
-                    time.sleep(next_time - now)
-                elapsed_time = now - next_time                          # Compute elapsed time since loop start
+                loop_start = time.perf_counter()
+                sleep_for = next_time - loop_start
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
+                else:
+                    next_time = time.perf_counter()
+                elapsed_time = loop_start - t0                          # Compute elapsed time since loop start
 
                 # ── Interpolate reference speed at t and t+Ts ───────────────────
                 if elapsed_time <= ref_time[0]:
@@ -231,7 +340,10 @@ if __name__ == "__main__":
                     t_future = t_future[valid_mask]             
                 ref_horizon_speed = np.interp(t_future, ref_time, ref_speed)
                 ref_horizon_speed = ref_horizon_speed.reshape(-1, 1)
-                print(f"The ref_horizon_speed for DeePC with shape{ref_horizon_speed.shape} is: {ref_horizon_speed.flatten().ravel()}")
+                # print(
+                #     f"The ref_horizon_speed for DeePC with shape{ref_horizon_speed.shape} is: {ref_horizon_speed.flatten().ravel()}"
+                #     f"The uini for DeePC with shape{u_init.shape} is {u_init.flatten().ravel()}"
+                #     f"The yini for DeePC with shape{y_init.shape} is {y_init.flatten().ravel()}")
                 
                 # ── Compute current error e[k] and future error e_fut[k] ────────
                 v_meas = latest_speed if latest_speed is not None else 0.0
@@ -242,6 +354,13 @@ if __name__ == "__main__":
                 # if hankel_idx == DeePC_kickIn_time (initial time where DeePC kicks in): # At start: can build a local hankel matrix now, start to use DeePC
                 # if hankel_idx+THorizon >= DeePC_stop_time  # At the end, hankel matrix exceed the full length of reference data
                 Up_cur, Uf_cur, Yp_cur, Yf_cur = hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_idx)
+                # print(
+                    # f"Up_cur shape{Up_cur.shape} value: {Up_cur}, "
+                    #   f"Uf_cur shape{Uf_cur.shape} value: {Uf_cur}, "
+                    #   f"Yp_cur shape{Yp_cur.shape} value: {Yp_cur}, "
+                    #   f"Yf_cur shape{Uf_cur.shape} value: {Uf_cur}, "
+                    #   f"hankel_idx {hankel_idx}")
+                
                 u_opt, g_opt, t_deepc = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
                                                                 Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q, R_val=R,
                                                                 lambda_g_val=lambda_g, lambda_y_val=lambda_y, g_prev = g_prev)   
@@ -250,7 +369,7 @@ if __name__ == "__main__":
                 #                                                 lambda_g_val=lambda_g_val, lambda_y_val=lambda_y_val, g_prev = g_prev)   
                 # u_opt, g_opt, t_deepc = dpc.solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For CasADi NLP solver - Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
                 #                                         Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q_val, R_val=R_val,
-                #                                          lambda_g_val=lambda_g_val, lambda_y_val=lambda_y_val, lambda_u_val=lambda_u_val)         
+                #                                          lambda_g_val=lambda_g_val, lambda_y_val=lambda_y_val)         
 
                 # ──  Add a vehicle speed limiter safety feature (Theoretically don't need this part because all the control contraints are baked in the DeePC formulation) ────────
                 u_unclamped = u_opt[0]       
@@ -264,22 +383,24 @@ if __name__ == "__main__":
 
                 # ──  Send PWM to PCA9685: accel (ch=0) if u>=0, else brake (ch=4) ──
                 if u >= 0.0:
-                    set_pwm(bus, 4, 0.0)                                    # ensure brake channel is zero
-                    set_pwm(bus, 0, u)                                      # channel 0 = accelerator
+                    set_duty_cycle(bus, 4, 0.0)                                    # ensure brake channel is zero
+                    set_duty_cycle(bus, 0, u)                                      # channel 0 = accelerator
                 else:
-                    set_pwm(bus, 0, 0.0)                                    # ensure brake channel is zero
-                    set_pwm(bus, 4, -u)                                     # channel 4 = brake
+                    set_duty_cycle(bus, 0, 0.0)                                    # ensure brake channel is zero
+                    set_duty_cycle(bus, 4, -u)                                     # channel 4 = brake
 
+                actual_elapsed_time = round((time.perf_counter() - loop_start)*1000,3)
                 # ──  Debug printout ─────────────────────────────────────────────
                 print(
                     f"[{elapsed_time:.3f}] "
-                    f"v_ref={rspd_now:6.2f} kph, "
-                    f"v_meas={v_meas:6.2f} kph, e={e_k:+6.2f} kph,"
-                    f"u={u:+6.2f}%,"
-                    f"F_dyno={F_meas:6.2f} N,"
-                    f"BMS_socMin={BMS_socMin:6.2f} %,"
-                    f"SOC_CycleStarting={SOC_CycleStarting} %,"
-                    f"t_deepc={t_deepc:6.2f} s"
+                    f"v_ref={rspd_now:6.2f}kph, "
+                    f"v_meas={v_meas:6.2f}kph, e={e_k:+6.2f}kph, "
+                    f"u={u:6.2f}%, "
+                    f"F_dyno={F_meas:6.2f} N, "
+                    # f"BMS_socMin={BMS_socMin:6.2f} %,"
+                    f"SOC_CycleStarting AT={SOC_CycleStarting:6.2f} %, "
+                    f"t_deepc={t_deepc:6.3f} ms, "
+                    f"actual_elapsed_time_per_loop={actual_elapsed_time:6.3f} ms, "
                 )
 
                 # ── 10) Save state for next iteration ──────────────────────────────
@@ -294,9 +415,14 @@ if __name__ == "__main__":
 
                 # ── 11) Schedule next tick at 100 Hz ───────────────────────────────
                 next_time += Ts
-                hankel_idx += 1
                 g_prev = g_opt
-
+                # Update hankel_idx: because this is not ROTS system, 
+                # there's lags, it's not running exactly Ts per loop, 
+                # make hankel index correspond to the first 4 digits of elapsed_time
+                s = f"{elapsed_time:.3f}"               # "20.799"
+                digits = s.replace(".", "")             # "20799"
+                hankel_idx = int(digits[:4])            # 2079
+               
                 # 12) Append this tick’s values to log_data
                 log_data.append({
                     "time":      elapsed_time,
@@ -307,17 +433,16 @@ if __name__ == "__main__":
                     "t_deepc":   t_deepc,
                     "BMS_socMin":BMS_socMin,
                     "SOC_CycleStarting":SOC_CycleStarting,
-
                 })
-                if BMS_socMin <= SOC_Stop:
-                    break
+                # if BMS_socMin <= SOC_Stop:
+                #     break
 
         except KeyboardInterrupt:
             print("\n[Main] KeyboardInterrupt detected. Exiting…")
 
         finally:
             for ch in range(16):
-                set_pwm(bus, channel=ch, percent=0.0)                              # Zero out all PWM channels before exiting
+                set_duty_cycle(bus, channel=ch, percent=0.0)                              # Zero out all PWM channels before exiting
             print("[Main] pca board PWM signal cleaned up and set back to 0.")
                 # ── Save log_data to Excel ───────────────────────────────────
             if log_data:

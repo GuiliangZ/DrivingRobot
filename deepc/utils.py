@@ -31,52 +31,48 @@ from acados_template import AcadosOcp, AcadosOcpSolver
 
 from smbus2 import SMBus
 
+# ────────────────────────── GLOBALS VARIABLES ─────────────────────────────
 # ——— CP2112 I²C setup ———
-CP2112_BUS   = 3         # e.g. /dev/i2c-3
 PCA9685_ADDR = 0x40      # default PCA9685 address
 # PCA9685 register addresses
 MODE1_REG    = 0x00
 PRESCALE_REG = 0xFE
 LED0_ON_L    = 0x06     # base address for channel 0
 
-def set_pwm(bus: SMBus, channel: int, percent: float, freq_hz: float = 1000.0):
+def init_pca9685(bus: SMBus, freq_hz: float = 1000.0):
     """
-    Initialize PCA9685 (reset, set frequency) and set one channel’s duty cycle (0–100%).
-    Uses 12-bit resolution.
+    Reset PCA9685 and set PWM frequency.
+    """
+    prescale_val = int(round(25_000_000.0 / (4096 * freq_hz) - 1))
+    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x10)
+    time.sleep(0.01)
+    bus.write_byte_data(PCA9685_ADDR, PRESCALE_REG, prescale_val)
+    time.sleep(0.01)
+    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x00)
+    time.sleep(0.01)
+    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0xA1)
+    time.sleep(0.01)
+
+def set_duty_cycle(bus: SMBus, channel: int, percent: float):
+    """
+    Set one channel’s duty cycle (0–100%). Uses 12-bit resolution.
     """
     if not (0 <= channel <= 15):
         raise ValueError("channel must be in 0..15")
     if not (0.0 <= percent <= 100.0):
         raise ValueError("percent must be between 0.0 and 100.0")
 
-    # 1) Compute prescale for desired freq
-    prescale_val = int(round(25_000_000.0 / (4096 * freq_hz) - 1))
-
-    # 2) Enter sleep mode to set prescaler
-    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x10)  # sleep
-    time.sleep(0.01)
-
-    # 3) Write prescaler
-    bus.write_byte_data(PCA9685_ADDR, PRESCALE_REG, prescale_val)
-    time.sleep(0.01)
-
-    # 4) Wake up and enable auto-increment
-    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x00)  # wake
-    time.sleep(0.01)
-    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0xA1)  # restart + autoinc
-    time.sleep(0.01)
-
-    # 5) Compute on/off counts for duty cycle
+    # Convert percentage → 12-bit count (0..4095)
     duty_count = int(percent * 4095 / 100)
     on_l  = 0
     on_h  = 0
     off_l = duty_count & 0xFF
     off_h = (duty_count >> 8) & 0x0F
 
-    # 6) Write [ON_L, ON_H, OFF_L, OFF_H] to the channel’s LED registers
+    # Compute first-LED register for this channel
     reg = LED0_ON_L + 4 * channel
+    # Write [ON_L, ON_H, OFF_L, OFF_H]
     bus.write_i2c_block_data(PCA9685_ADDR, reg, [on_l, on_h, off_l, off_h])
-
 
 # ─────────────────────────── LOAD DRIVE-CYCLE .MAT ────────────────────────────
 def load_drivecycle_mat_files(base_folder: str):
@@ -128,103 +124,6 @@ def load_timeseries(data_dir):
     ud = u.reshape(-1, 1)
     yd = v.reshape(-1, 1)
     return ud, yd
-
-# ──────────────────────────── CAN LISTENER THREAD ──────────────────────────────
-def dyno_can_listener_thread(dbc_path: str, can_iface: str):
-    """
-    Runs in a background thread. Listens for 'Speed_and_Force' on can_iface,
-    decodes it using KAVL_V3.dbc, and updates globals latest_speed & latest_force.
-    """
-    global latest_speed, latest_force, dyno_can_running
-
-    try:
-        db = cantools.database.load_file(dbc_path)
-    except FileNotFoundError:
-        print(f"[CAN⋅Thread] ERROR: Cannot find DBC at '{dbc_path}'. Exiting CAN thread.")
-        return
-
-    try:
-        speed_force_msg = db.get_message_by_name('Speed_and_Force')
-    except KeyError:
-        print("[CAN⋅Thread] ERROR: 'Speed_and_Force' not found in DBC. Exiting CAN thread.")
-        return
-
-    try:
-        bus = can.interface.Bus(channel=can_iface, interface='socketcan')
-    except OSError:
-        print(f"[CAN⋅Thread] ERROR: Cannot open CAN interface '{can_iface}'. Exiting CAN thread.")
-        return
-
-    print(f"[CAN⋅Thread] Listening on {can_iface} for ID=0x{speed_force_msg.frame_id:03X}…")
-    while dyno_can_running:
-        msg = bus.recv(timeout=1.0)
-        if msg is None:
-            continue
-        if msg.arbitration_id != speed_force_msg.frame_id:
-            continue
-        try:
-            decoded = db.decode_message(msg.arbitration_id, msg.data)
-        except KeyError:
-            continue
-
-        s = decoded.get('Speed_kph')
-        f = decoded.get('Force_N')
-        if s is not None:
-            if -0.1 < s < 0.1:
-                latest_speed = int(round(s))
-            else:
-                latest_speed = float(s)
-        if f is not None:
-            latest_force = float(f)
-
-    bus.shutdown()
-    print("[CAN⋅Thread] Exiting CAN thread.")
-
-def veh_can_listener_thread(dbc_path: str, can_iface: str):
-    """
-    Runs in a background thread. Listens for 'BMS_socMin' on can_iface,
-    decodes it using vehBus.dbc, and updates globals BMS_socMin.
-    """
-    global BMS_socMin, veh_can_running
-
-    try:
-        db = cantools.database.load_file(dbc_path)
-    except FileNotFoundError:
-        print(f"[CAN⋅Thread] ERROR: Cannot find DBC at '{dbc_path}'. Exiting CAN thread.")
-        return
-
-    try:
-        bms_soc_msg = db.get_message_by_name('BMS_socStatus')
-    except KeyError:
-        print("[CAN⋅Thread] ERROR: 'BMS_socStatus' not found in DBC. Exiting CAN thread.")
-        return
-
-    try:
-        bus = can.interface.Bus(channel=can_iface, interface='socketcan')
-    except OSError:
-        print(f"[CAN⋅Thread] ERROR: Cannot open CAN interface '{can_iface}'. Exiting CAN thread.")
-        return
-
-    print(f"[CAN⋅Thread] Listening on {can_iface} for ID=0x{bms_soc_msg.frame_id:03X}…")
-    while veh_can_running:
-        msg = bus.recv(timeout=3.0)
-        if msg is None:
-            continue
-        if msg.arbitration_id != bms_soc_msg.frame_id:
-            continue
-        try:
-            decoded = db.decode_message(msg.arbitration_id, msg.data)
-        except KeyError:
-            continue
-
-        BMS_socMin = decoded.get('BMS_socMin')
-        if BMS_socMin is not None:
-            if BMS_socMin <= 2:
-                BMS_socMin = int(round(BMS_socMin))
-            else:
-                BMS_socMin = float(BMS_socMin)
-    bus.shutdown()
-    print("[CAN⋅Thread] Exiting CAN thread.")
 
 # ──────────────────────────── USER CHOOSE CYCLE KEY ──────────────────────────────
 def choose_cycle_key(all_cycles):
@@ -418,6 +317,8 @@ def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_id
     hankel_idx:         the current hankel matrix in the official run
     The sub-hankel matrix was chosen as hankel_idx as center, and front g_dim, and back g_dim data section.
       front g_dim for state estimation, and back g_dim for prediction. g_dim I'm leaving for 50 front and 50 back buffer by choosing g_dim = 100(hankel_subB_size=199)
+    
+    shape: Up, Uf, Tp, Tf - (Tini, g_dim)/(THorizon, g_dim)
     """
     # how many columns on each side of hankel_idx we want
     g_dim = hankel_subB_size - Tini - THorizon + 1

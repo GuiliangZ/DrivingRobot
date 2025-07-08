@@ -41,6 +41,7 @@ Required setup:
     sudo ip link set can0 up type can bitrate 500000 dbitrate 1000000 fd on
     sudo ip link set can1 up type can bitrate 500000 dbitrate 1000000 fd on
     sudo ip link set can2 up type can bitrate 500000 dbitrate 1000000 fd on
+    i2cdetect -l (find what the number i2c device lie and change that parameter)
 """
 
 import os
@@ -68,7 +69,7 @@ BMS_socMin = None            # Measured current vehicle SOC from Vehicle CAN
 # veh_can_running  = False 
 
 # ——— CP2112 I²C setup ———
-CP2112_BUS   = 3         # e.g. /dev/i2c-3
+CP2112_BUS   = 17         # e.g. /dev/i2c-3
 PCA9685_ADDR = 0x40      # default PCA9685 address
 # PCA9685 register addresses
 MODE1_REG    = 0x00

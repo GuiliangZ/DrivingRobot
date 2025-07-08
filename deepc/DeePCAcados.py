@@ -267,12 +267,15 @@ class deepctools():
             ocp.constraints.uh          = np.zeros(0)
 
         ocp.solver_options.qp_solver            = 'PARTIAL_CONDENSING_HPIPM' # also could try 'FULL_CONDENSING_QPOASES'
-        # ocp.solver_options.qp_solver            = "FULL_CONDENSING_HPIPM"
-        # ocp.solver_options.qp_solver            = 'FULL_CONDENSING_QPOASES'
+        # ocp.solver_options.qp_solver          = "FULL_CONDENSING_HPIPM"
+        # ocp.solver_options.qp_solver          = 'FULL_CONDENSING_QPOASES'
+
         ocp.solver_options.hessian_approx       = 'EXACT'                    # 'GAUSS_NEWTON' for "LINEAR_LS" cost_type
         # ocp.solver_options.ext_cost_num_hess  = True                       # turn on numeric external cost Hessians
         ocp.solver_options.integrator_type      = 'DISCRETE'                 # Using purely hankel-based styatic DeePC, best choice-'DISCRETE'. actual dynamic in OCP: 'ERK'-classic Runge-Kutta 4. Options: 'IRK', 'GNSF', 'LIFTED_IRK', 'DISCRETE
-        ocp.solver_options.nlp_solver_type      = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
+        # ocp.solver_options.nlp_solver_type      = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
+        ocp.solver_options.nlp_solver_type      = "SQP_WITH_FEASIBLE_QP"
+        ocp.solver_options.levenberg_marquardt = 1e-6
         ocp.dims.N                              = self.Np                    # number of shooting intervals = prediction steps
         ocp.solver_options.tf                   = 1.0                        # For s discrete dynamics, static QP in g, tf is unused - can leave it at the default(1.0)
 
@@ -303,7 +306,60 @@ class deepctools():
                 # acados_include_path='c_generated_code/include',
             )
         print('>> Acados solver ready (recompile=' + str(recompile_solver) + ')')
+    
+    # def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val, g_prev=None):
+    def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, g_prev=None):
+        """
+            solver solve the nlp for one time
+            uini, yini:  [array]   | (dim*Tini, 1)
+            uref, yref:  [array]   | (dim*Horizon, 1) if sp_change=True
+              g0_guess:  [array]   | (T-L+1, 1)
+            return:
+                u_opt:  the optimized control input for the next Np steps
+                 g_op:  the optimized operator g
+                  t_s:  solving time
+        """
+        if yref is None:
+            raise ValueError("Did not give value of 'yref', but required in objective function!")
+        
+        parameters = np.concatenate([
+            uini.ravel(), yini.ravel(), yref.ravel(),
+            Up_cur.ravel(), Yp_cur.ravel(),
+            Uf_cur.ravel(), Yf_cur.ravel(),
+            Q_val.ravel(),    R_val.ravel(),
+            lambda_g_val.ravel(),   lambda_y_val.ravel(),   # lambda_u_val.ravel(),
+        ])
 
+        # give acados initial guess
+        # # stack your prediction matrices row-wise:
+        # A = np.vstack([Up_cur, Yp_cur])             # shape ((u_dim+y_dim)*Tini,  g_dim)
+        # # stack your data vectors:
+        # b = np.vstack([uini, yini]).ravel()         # shape ((u_dim+y_dim)*Tini,)
+
+        # # solve the (unregularized) least-squares problem
+        # g_default, *_ = np.linalg.lstsq(A, b, rcond=None)
+        # # g_default is now a 1-D array of length g_dim
+        # g_default = g_default.ravel()   
+        g_default = np.linalg.pinv(np.vstack([Up_cur, Yp_cur, Yf_cur])) @ np.vstack([uini, yini, yref])       #psuedo-inverse to get g_default initial hot-start guess
+        g_default = g_default.ravel()
+
+        # choose hot-start if available
+        if g_prev is not None:
+            # ensure the shape matches
+            g0 = g_prev.ravel()
+        else:
+            g0 = g_default
+        self.solver.set( 0, "x", g0)
+        self.solver.set( 0, "p", parameters )
+
+        t0 = time.time()
+        sol = self.solver.solve()
+        t_s = round((time.time() - t0) * 1_000, 3)
+
+        g_opt = self.solver.get(0,"x")
+        u_opt = Uf_cur @ g_opt              # which is same as np.matmul(Uf_cur, g_opt)
+        return u_opt, g_opt, t_s
+    
     @timer
     def init_DeePCsolver(self, uloss='u', ineqconidx=None, ineqconbd=None, opts={}):
         """
@@ -517,66 +573,12 @@ class deepctools():
         parameters = np.concatenate((uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val))
         g0_guess = np.linalg.pinv(np.concatenate((Up_cur, Yp_cur), axis=0)) @ np.concatenate((uini, yini))
 
-        t_ = time.time()
+        t0 = time.time()
         sol = self.solver(x0=g0_guess, p=parameters, lbg=self.lbc, ubg=self.ubc)
-        t_s = time.time() - t_
+        t_s = round((time.time() - t0) * 1_000, 3)
 
         g_opt = sol['x'].full().ravel()
         u_opt = np.matmul(Uf_cur, g_opt)
-        return u_opt, g_opt, t_s
-
-
-    # def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val, g_prev=None):
-    def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, g_prev=None):
-        """
-            solver solve the nlp for one time
-            uini, yini:  [array]   | (dim*Tini, 1)
-            uref, yref:  [array]   | (dim*Horizon, 1) if sp_change=True
-              g0_guess:  [array]   | (T-L+1, 1)
-            return:
-                u_opt:  the optimized control input for the next Np steps
-                 g_op:  the optimized operator g
-                  t_s:  solving time
-        """
-        if yref is None:
-            raise ValueError("Did not give value of 'yref', but required in objective function!")
-        
-        parameters = np.concatenate([
-            uini.ravel(), yini.ravel(), yref.ravel(),
-            Up_cur.ravel(), Yp_cur.ravel(),
-            Uf_cur.ravel(), Yf_cur.ravel(),
-            Q_val.ravel(),    R_val.ravel(),
-            lambda_g_val.ravel(),   lambda_y_val.ravel(),   # lambda_u_val.ravel(),
-        ])
-
-        # give acados initial guess
-        # # stack your prediction matrices row-wise:
-        # A = np.vstack([Up_cur, Yp_cur])             # shape ((u_dim+y_dim)*Tini,  g_dim)
-        # # stack your data vectors:
-        # b = np.vstack([uini, yini]).ravel()         # shape ((u_dim+y_dim)*Tini,)
-
-        # # solve the (unregularized) least-squares problem
-        # g_default, *_ = np.linalg.lstsq(A, b, rcond=None)
-        # # g_default is now a 1-D array of length g_dim
-        # g_default = g_default.ravel()   
-        g_default = np.linalg.pinv(np.vstack([Up_cur, Yp_cur, Yf_cur])) @ np.vstack([uini, yini, yref])       #psuedo-inverse to get g_default initial hot-start guess
-        g_default = g_default.ravel()
-
-        # choose hot-start if available
-        if g_prev is not None:
-            # ensure the shape matches
-            g0 = g_prev.ravel()
-        else:
-            g0 = g_default
-        self.solver.set( 0, "x", g0)
-        self.solver.set( 0, "p", parameters )
-
-        t0 = time.time()
-        sol = self.solver.solve()
-        t_s = float(time.time()-t0)
-
-        g_opt = self.solver.get(0,"x")
-        u_opt = Uf_cur @ g_opt              # which is same as np.matmul(Uf_cur, g_opt)
         return u_opt, g_opt, t_s
     
 

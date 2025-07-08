@@ -41,6 +41,7 @@ Required setup:
     sudo ip link set can0 up type can bitrate 500000 dbitrate 1000000 fd on
     sudo ip link set can1 up type can bitrate 500000 dbitrate 1000000 fd on
     sudo ip link set can2 up type can bitrate 500000 dbitrate 1000000 fd on
+    i2cdetect -l (find what the number i2c device lie and change that parameter)
 """
 
 import os
@@ -68,46 +69,46 @@ BMS_socMin = None            # Measured current vehicle SOC from Vehicle CAN
 # veh_can_running  = False 
 
 # ——— CP2112 I²C setup ———
-CP2112_BUS   = 3         # e.g. /dev/i2c-3
+CP2112_BUS   = 12         # e.g. /dev/i2c-3
 PCA9685_ADDR = 0x40      # default PCA9685 address
 # PCA9685 register addresses
 MODE1_REG    = 0x00
 PRESCALE_REG = 0xFE
 LED0_ON_L    = 0x06     # base address for channel 0
 
-def set_pwm(bus: SMBus, channel: int, percent: float, freq_hz: float = 1000.0):
+def init_pca9685(bus: SMBus, freq_hz: float = 1000.0):
     """
-    Initialize PCA9685 (reset, set frequency) and set one channel’s duty cycle (0–100%).
-    Uses 12-bit resolution.
+    Reset PCA9685 and set PWM frequency.
+    """
+    prescale_val = int(round(25_000_000.0 / (4096 * freq_hz) - 1))
+    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x10)
+    time.sleep(0.01)
+    bus.write_byte_data(PCA9685_ADDR, PRESCALE_REG, prescale_val)
+    time.sleep(0.01)
+    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x00)
+    time.sleep(0.01)
+    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0xA1)
+    time.sleep(0.01)
+
+def set_duty_cycle(bus: SMBus, channel: int, percent: float):
+    """
+    Set one channel’s duty cycle (0–100%). Uses 12-bit resolution.
     """
     if not (0 <= channel <= 15):
         raise ValueError("channel must be in 0..15")
     if not (0.0 <= percent <= 100.0):
         raise ValueError("percent must be between 0.0 and 100.0")
 
-    # 1) Compute prescale for desired freq
-    prescale_val = int(round(25_000_000.0 / (4096 * freq_hz) - 1))
-    # 2) Enter sleep mode to set prescaler
-    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x10)  # sleep
-    time.sleep(0.01)
-    # 3) Write prescaler
-    bus.write_byte_data(PCA9685_ADDR, PRESCALE_REG, prescale_val)
-    time.sleep(0.01)
-    # 4) Wake up and enable auto-increment
-    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0x00)  # wake
-    time.sleep(0.01)
-    bus.write_byte_data(PCA9685_ADDR, MODE1_REG, 0xA1)  # restart + autoinc
-    time.sleep(0.01)
-
-    # 5) Compute on/off counts for duty cycle
+    # Convert percentage → 12-bit count (0..4095)
     duty_count = int(percent * 4095 / 100)
     on_l  = 0
     on_h  = 0
     off_l = duty_count & 0xFF
     off_h = (duty_count >> 8) & 0x0F
 
-    # 6) Write [ON_L, ON_H, OFF_L, OFF_H] to the channel’s LED registers
+    # Compute first-LED register for this channel
     reg = LED0_ON_L + 4 * channel
+    # Write [ON_L, ON_H, OFF_L, OFF_H]
     bus.write_i2c_block_data(PCA9685_ADDR, reg, [on_l, on_h, off_l, off_h])
 
 # ─────────────────────────── LOAD DRIVE-CYCLE .MAT ────────────────────────────
@@ -331,7 +332,8 @@ def get_gains_for_speed(ref_speed: float):
 if __name__ == "__main__":
     # ─── PCA9685 PWM SETUP ──────────────────────────────────────────────────────
     bus = SMBus(CP2112_BUS)
-    
+    init_pca9685(bus, freq_hz=1000.0)
+    print("PCA9685 initialized at 1 kHz on CP2112 bus", CP2112_BUS)
     # ─── START CAN LISTENER THREAD ───────────────────────────────────────────────
     DYNO_DBC_PATH = '/home/guiliang/Desktop/DrivingRobot/KAVL_V3.dbc'
     DYNO_CAN_INTERFACE = 'can0'
@@ -363,7 +365,7 @@ if __name__ == "__main__":
     FeedFwdTime = 0.65          # feedforward reference speed time
     max_delta = 50.0            # maximum % change per 0.01 s tick - regulate the rate of change of pwm output u
     SOC_CycleStarting = 0.0     # Managing Vehicle SOC
-    SOC_Stop = 97.9              # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
+    SOC_Stop = 2.2              # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
 
     Ts = 0.01                   # 100 Hz main control loop updating rate - Sampling time 
 
@@ -373,6 +375,10 @@ if __name__ == "__main__":
             break
         else:
             SOC_CycleStarting = BMS_socMin
+            if SOC_CycleStarting is not None:
+                SOC_CycleStarting = round(SOC_CycleStarting, 2)
+            else:
+                SOC_CycleStarting = 0.0
 
         #Loading current cycle data
         cycle_data = all_cycles[cycle_key]                              
@@ -401,6 +407,8 @@ if __name__ == "__main__":
         # Record loop‐start time so we can log elapsed time from 0.0
         next_time      = time.time()
         now            = time.time()
+        t0             = time.time()
+        print(f"Now time: {now},  next_time: {next_time}")
         print(f"\n[Main] Starting cycle '{cycle_key}' on {veh_modelName}, duration={ref_time[-1]:.2f}s")
         
     # ─── MAIN 100 Hz CONTROL LOOP ─────────────────────────────────────────────────
@@ -409,9 +417,9 @@ if __name__ == "__main__":
             while True:
                 now = time.time()
                 if now < next_time:
-                    time.sleep(next_time - now)
-                elapsed_time = now - next_time                 # Compute elapsed time since loop start
-
+                    time.sleep(next_time - now)                
+                elapsed_time = now - t0                 # Compute elapsed time since loop start
+                
                 # ── 1) Interpolate reference speed at t and t+Ts ───────────────────
                 if elapsed_time <= ref_time[0]:
                     rspd_now = ref_speed[0]
@@ -478,11 +486,11 @@ if __name__ == "__main__":
 
                 # ── 8) Send PWM to PCA9685: accel (ch=0) if u>=0, else brake (ch=4) ──
                 if u >= 0.0:
-                    set_pwm(bus, 4, 0.0)                                    # ensure brake channel is zero
-                    set_pwm(bus, 0, u)                                      # channel 0 = accelerator
+                    set_duty_cycle(bus, 4, 0.0)                                    # ensure brake channel is zero
+                    set_duty_cycle(bus, 0, u)                                      # channel 0 = accelerator
                 else:
-                    set_pwm(bus, 0, 0.0)                                    # ensure brake channel is zero
-                    set_pwm(bus, 4, -u)                                     # channel 4 = brake
+                    set_duty_cycle(bus, 0, 0.0)                                    # ensure brake channel is zero
+                    set_duty_cycle(bus, 4, -u)                                     # channel 4 = brake
 
                 # ── 9) Debug printout ─────────────────────────────────────────────
                 print(
@@ -492,7 +500,7 @@ if __name__ == "__main__":
                     f"P={P_term:+6.2f}, I={I_out:+6.2f}, D={D_term:+6.2f}, FF={FF_term:+6.2f}, "
                     f"u={u:+6.2f}%,"
                     f"F_dyno={F_meas:6.2f} N,"
-                    f"BMS_socMin={BMS_socMin:6.2f} %,"
+                    # f"BMS_socMin={BMS_socMin:6.2f} %,"
                     f"SOC_CycleStarting={SOC_CycleStarting} %"
                 )
 
@@ -510,7 +518,7 @@ if __name__ == "__main__":
                     "v_ref":     rspd_now,
                     "v_meas":    v_meas,
                     "u":         u,
-                    "BMS_socMin":BMS_socMin,
+                    # "BMS_socMin":BMS_socMin,
                     "SOC_CycleStarting":SOC_CycleStarting,
                     "error":     e_k,
                     "error_fut": e_fut,
@@ -523,15 +531,15 @@ if __name__ == "__main__":
                     "Kd":        Kd,
                     "Kff":       Kff,
                 })
-                if BMS_socMin <= SOC_Stop:
-                    break
+                # if BMS_socMin <= SOC_Stop:
+                #     break
 
         except KeyboardInterrupt:
             print("\n[Main] KeyboardInterrupt detected. Exiting…")
 
         finally:
             for ch in range(16):
-                set_pwm(bus, channel=ch, percent=0.0)                              # Zero out all PWM channels before exiting
+                set_duty_cycle(bus, channel=ch, percent=0.0)                              # Zero out all PWM channels before exiting
             print("[Main] pca board PWM signal cleaned up and set back to 0.")
                 # ── Save log_data to Excel ───────────────────────────────────
             if log_data:

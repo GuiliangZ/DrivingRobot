@@ -41,6 +41,7 @@ Required setup:
     sudo ip link set can0 up type can bitrate 500000 dbitrate 1000000 fd on
     sudo ip link set can1 up type can bitrate 500000 dbitrate 1000000 fd on
     sudo ip link set can2 up type can bitrate 500000 dbitrate 1000000 fd on
+    i2cdetect -l (find what the number i2c device lie and change that parameter)
 """
 
 import os
@@ -385,6 +386,7 @@ if __name__ == "__main__":
         # Record loop‐start time so we can log elapsed time from 0.0
         next_time      = time.time()
         now            = time.time()
+        t0             = time.time()
         print(f"\n[Main] Starting cycle '{cycle_key}' on {veh_modelName}, duration={ref_time[-1]:.2f}s")
         
     # ─── MAIN 100 Hz CONTROL LOOP ─────────────────────────────────────────────────
@@ -394,7 +396,7 @@ if __name__ == "__main__":
                 now = time.time()
                 if now < next_time:
                     time.sleep(next_time - now)
-                elapsed_time = now - next_time                 # Compute elapsed time since loop start
+                elapsed_time = now - t0                 # Compute elapsed time since loop start
 
                 # ── 1) Interpolate reference speed at t and t+Ts ───────────────────
                 if elapsed_time <= ref_time[0]:
