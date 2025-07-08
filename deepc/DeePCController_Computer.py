@@ -48,10 +48,15 @@ BMS_socMin = None                                   # Measured current vehicle S
 dyno_can_running  = False                           # For temperal debugging
 veh_can_running  = False 
 
-
-
 # ─────────────────────────────── MAIN CONTROL ─────────────────────────────────
 if __name__ == "__main__":
+    # System parameters
+    max_delta = 50.0                                    # maximum % change per 0.01 s(Ts) tick - regulate the rate of change of pwm output u
+    SOC_CycleStarting = 0.0                             # Managing Vehicle SOC - record SOC at every starting point of the cycle
+    SOC_Stop = 2.2                                      # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
+
+    Ts = 0.01                                           # 100 Hz main control loop updating rate - Sampling time 
+    
     # ─── DeePC Acados SETUP ──────────────────────────────────────────────────────
     # DeePC paramters    
     PROJECT_DIR = Path(__file__).resolve().parent 
@@ -76,18 +81,17 @@ if __name__ == "__main__":
     # DeePC related hyperparameters to tune
     recompile_solver = False                          # True to recompile the acados solver at change of following parameters. False to use the previously compiled solver
     Tini        = 20                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-    THorizon    = 20                                # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-    hankel_subB_size = 89                          # hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
-    Q_val = 10                                         # the weighting matrix of controlled outputs y
+    THorizon    = 20                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+    hankel_subB_size = 89                             # hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+    Q_val = 10                                        # the weighting matrix of controlled outputs y
     R_val = 1                                         # the weighting matrix of control inputs u
     lambda_g_val = 1                                  # the weighting matrix of norm of operator g
-    lambda_y_val = 10                                   # the weighting matrix of mismatch of controlled output y
-    # lambda_u_val= 10                                   # the weighting matrix of mismatch of controlled output u
+    lambda_y_val = 3                                  # the weighting matrix of mismatch of controlled output y
+    # lambda_u_val= 10                                # the weighting matrix of mismatch of controlled output u
     T           = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
     g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
 
-
-    #DeePC_kickIn_time = 100                                                        # because we need to build hankel matrix around the current time point, should be half of the hankel_subB_size
+    #DeePC_kickIn_time = 100                                                      # because we need to build hankel matrix around the current time point, should be half of the hankel_subB_size
     if os.path.isfile(CACHE_FILE_HANKEL_DATA):
         print(f"[Main] Using cached hankel matrix data from {CACHE_FILE_HANKEL_DATA}")
         npz_hankel = np.load(CACHE_FILE_HANKEL_DATA)
@@ -113,11 +117,10 @@ if __name__ == "__main__":
 
     dpc_args = [u_dim, y_dim, T, Tini, THorizon]                                    # THorizon is Np in dpc class
     dpc_kwargs = dict(ineqconidx=ineqconidx, ineqconbd=ineqconbd)
-
     dpc = dpcAcados.deepctools(*dpc_args, **dpc_kwargs)
 
     # init and formulate deepc solver
-    dpc.init_DeePCAcadosSolver(ineqconidx=ineqconidx, ineqconbd=ineqconbd) # Use acados solver
+    dpc.init_DeePCAcadosSolver(recompile_solver=recompile_solver, ineqconidx=ineqconidx, ineqconbd=ineqconbd) # Use acados solver
     dpc_opts = {                            # cs.nlpsol solver parameters - not used in acados
         'ipopt.max_iter': 100,  # 50
         'ipopt.tol': 1e-5,
@@ -160,12 +163,6 @@ if __name__ == "__main__":
     all_cycles = load_drivecycle_mat_files(base_folder) # Load reference cycle from .mat(s)
     cycle_keys = choose_cycle_key(all_cycles)           # Prompt the user to choose multiple drive cycles the user wish to test
     veh_modelName = choose_vehicleModelName()           # Prompt the user to choose the model of testing vehicle for logging purpose
-    # System parameters
-    max_delta = 50.0                                    # maximum % change per 0.01 s(Ts) tick - regulate the rate of change of pwm output u
-    SOC_CycleStarting = 0.0                             # Managing Vehicle SOC - record SOC at every starting point of the cycle
-    SOC_Stop = 2.2                                      # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
-
-    Ts = 0.01                                           # 100 Hz main control loop updating rate - Sampling time 
 
     for idx, cycle_key in enumerate(cycle_keys):
         # ----------------Stop the test if the vehicle SOC is too low to prevent draining the vehicle---------------------

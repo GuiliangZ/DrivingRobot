@@ -175,7 +175,7 @@ class deepctools():
         return Hc, lbc, ubc, ineq_flag
 
     @timer
-    def init_DeePCAcadosSolver(self, ineqconidx=None, ineqconbd=None):
+    def init_DeePCAcadosSolver(self, recompile_solver=True, ineqconidx=None, ineqconbd=None):
         """
         Build an acados QP-OC solver for DeePC:
         min  ½ gᵀ H g + qᵀ g
@@ -279,7 +279,30 @@ class deepctools():
         # Initilize g and all the parameters with zero for acados initial build, will update those parameters at run time
         n_p = ocp.model.p.numel()                                           # total number of entries in the SX parameter vector
         ocp.parameter_values = np.zeros(n_p)                                # or fill with your actual parameter data
-        self.solver = AcadosOcpSolver(ocp, json_file = 'DeePC_acados_ocp.json')
+        
+        # === Create or load solver ===
+        if recompile_solver:
+            # regenerate C code + make
+            self.solver = AcadosOcpSolver(
+                ocp,
+                json_file='DeePC_acados_ocp.json',
+                generate=True,
+                build=True,
+                verbose=True,
+            )
+        else:
+            # load existing compiled solver from c_generated_code
+            # skips code_export() & make()
+            self.solver = AcadosOcpSolver(
+                None,
+                json_file='DeePC_acados_ocp.json',
+                generate=False,
+                build=False,
+                verbose=True,
+                # acados_lib_path='c_generated_code/lib',
+                # acados_include_path='c_generated_code/include',
+            )
+        print('>> Acados solver ready (recompile=' + str(recompile_solver) + ')')
 
     @timer
     def init_DeePCsolver(self, uloss='u', ineqconidx=None, ineqconbd=None, opts={}):
