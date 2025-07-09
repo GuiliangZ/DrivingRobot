@@ -9,10 +9,20 @@ Required setup:
   pip install numpy scipy cantools python-can adafruit-circuitpython-pca9685
   sudo pip install Jetson.GPIO
   # !!!!!!!!!! Always run this command line in the terminal to start the CAN reading: !!!!!!!!!
-    sudo ip link set can0 up type can bitrate 500000 dbitrate 1000000 fd on
-    sudo ip link set can1 up type can bitrate 500000 dbitrate 1000000 fd on
-    sudo ip link set can2 up type can bitrate 500000 dbitrate 1000000 fd on
-"""
+# CAN setup
+sudo modprobe can       # core CAN support
+sudo modprobe can_raw   # raw-socket protocol
+sudo modprobe can_dev   # network interface “canX” support
+sudo modprobe kvaser_usb
+sudo ip link set can0 down                         # if it was already up
+sudo ip link set can0 type can bitrate 500000
+sudo ip link set can0 up
+sudo ip link set can1 down
+sudo ip link set can1 type can bitrate 500000
+sudo ip link set can1 up
+    i2cdetect -l
+    ls /sys/class/net/ | grep can
+    """
 import psutil, os
 import time
 from datetime import datetime
@@ -36,10 +46,11 @@ import casadi as cs
 from acados_template import AcadosOcp, AcadosOcpSolver
 import deepctools as dpc
 from deepctools.util import *
-from utils import *
+from utils_deepc import *
 import DeePCAcados as dpcAcados
 
 # ────────────────────────── GLOBALS FOR CAN THREAD ─────────────────────────────
+algorithm_name = "DeePCAcados_Comp"
 latest_speed = None                                 # Measured speed (kph) from CAN
 latest_force = None                                 # Measured force (N) from CAN (unused here)
 dyno_can_running  = True                            # Flag to stop the CAN thread on shutdown
@@ -47,7 +58,7 @@ veh_can_running  = True
 BMS_socMin = None                                   # Measured current vehicle SOC from Vehicle CAN
 # dyno_can_running  = False                           # For temperal debugging
 # veh_can_running  = False 
-CP2112_BUS   = 12         # e.g. /dev/i2c-3
+CP2112_BUS   = 17         # e.g. /dev/i2c-3
 
 # ──────────────────────────── CAN LISTENER THREAD ──────────────────────────────
 def dyno_can_listener_thread(dbc_path: str, can_iface: str):
@@ -153,7 +164,10 @@ if __name__ == "__main__":
     SOC_CycleStarting = 0.0                             # Managing Vehicle SOC - record SOC at every starting point of the cycle
     SOC_Stop = 2.2                                      # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
 
-    Ts = 0.01                                           # 100 Hz main control loop updating rate - Sampling time 
+    
+    Ts = 0.001                                           # 100 Hz main control loop updating rate - Sampling time 
+                # (if the actual loop time is larger than this Ts, the loop will updated at the actual computation time. 
+                # It will only be at this control frequency when the loop is fast enough to finish computation under this time)
     
     # ─── DeePC Acados SETUP ──────────────────────────────────────────────────────
     # DeePC paramters    
@@ -177,10 +191,12 @@ if __name__ == "__main__":
     y_dim       = 1                                   # the dimension of controlled outputs - DR case: 1 -Dyno speed output
     # s = 1                                           # How many steps before we solve again the DeePC problem - how many control input used per iteration
     # DeePC related hyperparameters to tune
-    recompile_solver = False                          # True to recompile the acados solver at change of following parameters. False to use the previously compiled solver
-    Tini        = 20                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-    THorizon    = 20                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-    hankel_subB_size = 89                             # hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+    use_hankel_cached = False
+    recompile_solver = False
+    # recompile_solver = True                         # True to recompile the acados solver at change of following parameters. False to use the previously compiled solver
+    Tini        = 30                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
+    THorizon    = 30                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+    hankel_subB_size = 129                             # hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
     Q_val = 10                                        # the weighting matrix of controlled outputs y
     R_val = 1                                         # the weighting matrix of control inputs u
     lambda_g_val = 10                                  # the weighting matrix of norm of operator g
@@ -190,7 +206,7 @@ if __name__ == "__main__":
     g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
 
     #DeePC_kickIn_time = 100                                                      # because we need to build hankel matrix around the current time point, should be half of the hankel_subB_size
-    if os.path.isfile(CACHE_FILE_HANKEL_DATA):
+    if os.path.isfile(CACHE_FILE_HANKEL_DATA) and use_hankel_cached:
         print(f"[Main] Using cached hankel matrix data from {CACHE_FILE_HANKEL_DATA}")
         npz_hankel = np.load(CACHE_FILE_HANKEL_DATA)
         Up, Uf, Yp, Yf = npz_hankel['Up'], npz_hankel['Uf'], npz_hankel['Yp'], npz_hankel['Yf']
@@ -296,6 +312,7 @@ if __name__ == "__main__":
         ref_horizon_speed = ref_speed[:THorizon].reshape(-1,1)          # Prepare reference speed horizon for DeePC - Length 
 
         # -----------------Reset states--------------------------------------------------------------------------------------
+        loop_count     = 0
         hankel_idx     = 0
         prev_error     = 0.0
         u_prev         = 0.0
@@ -310,6 +327,17 @@ if __name__ == "__main__":
         next_time      = time.perf_counter()
         t0             = time.perf_counter()
         print(f"\n[Main] Starting cycle '{cycle_key}' on {veh_modelName}, duration={ref_time[-1]:.2f}s")
+
+        # ----------------Real-time Effort (try to avoid system lags - each loop more than 10ms)
+        # For real-time effort - put into kernel - linux 5.15.0-1087-realtime for strict time update - but this kernel doesn't have wifi and nvidia drive
+        SCHED_FIFO = os.SCHED_FIFO
+        priority = 99
+        param = os.sched_param(priority)
+        try:
+            os.sched_setscheduler(0, SCHED_FIFO, param)
+            print(f"[Main] Real-time scheduling enabled: FIFO, priority={priority}")
+        except:
+            print("Need to run as root (or have CAP_SYS_NICE)")
 
     # ─── MAIN 100 Hz CONTROL LOOP ─────────────────────────────────────────────────
         print("[Main] Entering 100 Hz control loop. Press Ctrl+C to exit.\n")
@@ -361,7 +389,7 @@ if __name__ == "__main__":
                     #   f"Yf_cur shape{Uf_cur.shape} value: {Uf_cur}, "
                     #   f"hankel_idx {hankel_idx}")
                 
-                u_opt, g_opt, t_deepc = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
+                u_opt, g_opt, t_deepc, exist_feasible_sol = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
                                                                 Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q, R_val=R,
                                                                 lambda_g_val=lambda_g, lambda_y_val=lambda_y, g_prev = g_prev)   
                 # u_opt, g_opt, t_deepc = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
@@ -390,6 +418,7 @@ if __name__ == "__main__":
                     set_duty_cycle(bus, 4, -u)                                     # channel 4 = brake
 
                 actual_elapsed_time = round((time.perf_counter() - loop_start)*1000,3)
+                actual_control_frequency = 1/(actual_elapsed_time / 1000)
                 # ──  Debug printout ─────────────────────────────────────────────
                 print(
                     f"[{elapsed_time:.3f}] "
@@ -401,7 +430,10 @@ if __name__ == "__main__":
                     f"SOC_CycleStarting AT={SOC_CycleStarting:6.2f} %, "
                     f"t_deepc={t_deepc:6.3f} ms, "
                     f"actual_elapsed_time_per_loop={actual_elapsed_time:6.3f} ms, "
+                    f"actual_control_frequency={actual_control_frequency:6.3f} Hz"
                 )
+
+                # print(f"loop_count: {loop_count}")
 
                 # ── 10) Save state for next iteration ──────────────────────────────
                 prev_error     = e_k
@@ -416,6 +448,7 @@ if __name__ == "__main__":
                 # ── 11) Schedule next tick at 100 Hz ───────────────────────────────
                 next_time += Ts
                 g_prev = g_opt
+                loop_count += 1
                 # Update hankel_idx: because this is not ROTS system, 
                 # there's lags, it's not running exactly Ts per loop, 
                 # make hankel index correspond to the first 4 digits of elapsed_time
@@ -451,7 +484,7 @@ if __name__ == "__main__":
                 datetime = datetime.now()
                 df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
                 timestamp_str = datetime.strftime("%H%M_%m%d")
-                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start.xlsx"
+                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{algorithm_name}.xlsx"
                 log_dir = os.path.join(base_folder, "Log_DriveRobot")
                 os.makedirs(log_dir, exist_ok=True)     
                 excel_path = os.path.join(log_dir, excel_filename)

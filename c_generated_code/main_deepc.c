@@ -104,26 +104,6 @@ int main()
     x_init[27] = 0.0;
     x_init[28] = 0.0;
     x_init[29] = 0.0;
-    x_init[30] = 0.0;
-    x_init[31] = 0.0;
-    x_init[32] = 0.0;
-    x_init[33] = 0.0;
-    x_init[34] = 0.0;
-    x_init[35] = 0.0;
-    x_init[36] = 0.0;
-    x_init[37] = 0.0;
-    x_init[38] = 0.0;
-    x_init[39] = 0.0;
-    x_init[40] = 0.0;
-    x_init[41] = 0.0;
-    x_init[42] = 0.0;
-    x_init[43] = 0.0;
-    x_init[44] = 0.0;
-    x_init[45] = 0.0;
-    x_init[46] = 0.0;
-    x_init[47] = 0.0;
-    x_init[48] = 0.0;
-    x_init[49] = 0.0;
 
     // initial value for control input
     double u0[NU];

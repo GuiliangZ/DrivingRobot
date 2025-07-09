@@ -55,6 +55,12 @@ int deepc_dyn_disc_phi_fun_jac_n_out(void);
 
 
 
+int deepc_dyn_disc_phi_fun_jac_hess(const real_t** arg, real_t** res, int* iw, real_t* w, void *mem);
+int deepc_dyn_disc_phi_fun_jac_hess_work(int *, int *, int *, int *);
+const int *deepc_dyn_disc_phi_fun_jac_hess_sparsity_in(int);
+const int *deepc_dyn_disc_phi_fun_jac_hess_sparsity_out(int);
+int deepc_dyn_disc_phi_fun_jac_hess_n_in(void);
+int deepc_dyn_disc_phi_fun_jac_hess_n_out(void);
 
 
 

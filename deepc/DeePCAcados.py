@@ -266,15 +266,15 @@ class deepctools():
             ocp.constraints.lh          = np.zeros(0)
             ocp.constraints.uh          = np.zeros(0)
 
-        ocp.solver_options.qp_solver            = 'PARTIAL_CONDENSING_HPIPM' # also could try 'FULL_CONDENSING_QPOASES'
+        ocp.solver_options.qp_solver          = 'PARTIAL_CONDENSING_HPIPM' # also could try 'FULL_CONDENSING_QPOASES'
         # ocp.solver_options.qp_solver          = "FULL_CONDENSING_HPIPM"
         # ocp.solver_options.qp_solver          = 'FULL_CONDENSING_QPOASES'
 
         ocp.solver_options.hessian_approx       = 'EXACT'                    # 'GAUSS_NEWTON' for "LINEAR_LS" cost_type
         # ocp.solver_options.ext_cost_num_hess  = True                       # turn on numeric external cost Hessians
         ocp.solver_options.integrator_type      = 'DISCRETE'                 # Using purely hankel-based styatic DeePC, best choice-'DISCRETE'. actual dynamic in OCP: 'ERK'-classic Runge-Kutta 4. Options: 'IRK', 'GNSF', 'LIFTED_IRK', 'DISCRETE
-        # ocp.solver_options.nlp_solver_type      = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
-        ocp.solver_options.nlp_solver_type      = "SQP_WITH_FEASIBLE_QP"
+        ocp.solver_options.nlp_solver_type      = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
+        # ocp.solver_options.nlp_solver_type      = "SQP_WITH_FEASIBLE_QP"    # 'SQP', 'DDP'
         ocp.solver_options.levenberg_marquardt = 1e-6
         ocp.dims.N                              = self.Np                    # number of shooting intervals = prediction steps
         ocp.solver_options.tf                   = 1.0                        # For s discrete dynamics, static QP in g, tf is unused - can leave it at the default(1.0)
@@ -353,12 +353,13 @@ class deepctools():
         self.solver.set( 0, "p", parameters )
 
         t0 = time.time()
-        sol = self.solver.solve()
+        status = self.solver.solve()
+        exist_feasible_sol = (status == 0)
         t_s = round((time.time() - t0) * 1_000, 3)
 
         g_opt = self.solver.get(0,"x")
         u_opt = Uf_cur @ g_opt              # which is same as np.matmul(Uf_cur, g_opt)
-        return u_opt, g_opt, t_s
+        return u_opt, g_opt, t_s, exist_feasible_sol
     
     @timer
     def init_DeePCsolver(self, uloss='u', ineqconidx=None, ineqconbd=None, opts={}):

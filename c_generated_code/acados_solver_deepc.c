@@ -153,10 +153,10 @@ void deepc_acados_create_set_plan(ocp_nlp_plan_t* nlp_solver_plan, const int N)
     *  plan
     ************************************************/
 
-    nlp_solver_plan->nlp_solver = SQP_RTI;
+    nlp_solver_plan->nlp_solver = SQP_WITH_FEASIBLE_QP;
 
-    nlp_solver_plan->ocp_qp_solver_plan.qp_solver = PARTIAL_CONDENSING_HPIPM;
-    nlp_solver_plan->relaxed_ocp_qp_solver_plan.qp_solver = PARTIAL_CONDENSING_HPIPM;
+    nlp_solver_plan->ocp_qp_solver_plan.qp_solver = FULL_CONDENSING_QPOASES;
+    nlp_solver_plan->relaxed_ocp_qp_solver_plan.qp_solver = FULL_CONDENSING_QPOASES;
     nlp_solver_plan->nlp_cost[0] = EXTERNAL;
     for (int i = 1; i < N; i++)
         nlp_solver_plan->nlp_cost[i] = EXTERNAL;
@@ -472,34 +472,24 @@ void deepc_acados_setup_nlp_in(deepc_solver_capsule* capsule, const int N, doubl
     {
         // set time_steps
     
-        double time_step = 0.05;
+        double time_step = 0.1;
         for (int i = 0; i < N; i++)
         {
             ocp_nlp_in_set(nlp_config, nlp_dims, nlp_in, i, "Ts", &time_step);
         }
         // set cost scaling
         double* cost_scaling = malloc((N+1)*sizeof(double));
-        cost_scaling[0] = 0.05;
-        cost_scaling[1] = 0.05;
-        cost_scaling[2] = 0.05;
-        cost_scaling[3] = 0.05;
-        cost_scaling[4] = 0.05;
-        cost_scaling[5] = 0.05;
-        cost_scaling[6] = 0.05;
-        cost_scaling[7] = 0.05;
-        cost_scaling[8] = 0.05;
-        cost_scaling[9] = 0.05;
-        cost_scaling[10] = 0.05;
-        cost_scaling[11] = 0.05;
-        cost_scaling[12] = 0.05;
-        cost_scaling[13] = 0.05;
-        cost_scaling[14] = 0.05;
-        cost_scaling[15] = 0.05;
-        cost_scaling[16] = 0.05;
-        cost_scaling[17] = 0.05;
-        cost_scaling[18] = 0.05;
-        cost_scaling[19] = 0.05;
-        cost_scaling[20] = 1;
+        cost_scaling[0] = 0.1;
+        cost_scaling[1] = 0.1;
+        cost_scaling[2] = 0.1;
+        cost_scaling[3] = 0.1;
+        cost_scaling[4] = 0.1;
+        cost_scaling[5] = 0.1;
+        cost_scaling[6] = 0.1;
+        cost_scaling[7] = 0.1;
+        cost_scaling[8] = 0.1;
+        cost_scaling[9] = 0.1;
+        cost_scaling[10] = 1;
         for (int i = 0; i <= N; i++)
         {
             ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, i, "scaling", &cost_scaling[i]);
@@ -585,36 +575,16 @@ void deepc_acados_setup_nlp_in(deepc_solver_capsule* capsule, const int N, doubl
     lh[7] = -15;
     lh[8] = -15;
     lh[9] = -15;
-    lh[10] = -15;
-    lh[11] = -15;
-    lh[12] = -15;
-    lh[13] = -15;
-    lh[14] = -15;
-    lh[15] = -15;
-    lh[16] = -15;
-    lh[17] = -15;
-    lh[18] = -15;
-    lh[19] = -15;
-    lh[40] = -10;
-    lh[41] = -10;
-    lh[42] = -10;
-    lh[43] = -10;
-    lh[44] = -10;
-    lh[45] = -10;
-    lh[46] = -10;
-    lh[47] = -10;
-    lh[48] = -10;
-    lh[49] = -10;
-    lh[50] = -10;
-    lh[51] = -10;
-    lh[52] = -10;
-    lh[53] = -10;
-    lh[54] = -10;
-    lh[55] = -10;
-    lh[56] = -10;
-    lh[57] = -10;
-    lh[58] = -10;
-    lh[59] = -10;
+    lh[20] = -10;
+    lh[21] = -10;
+    lh[22] = -10;
+    lh[23] = -10;
+    lh[24] = -10;
+    lh[25] = -10;
+    lh[26] = -10;
+    lh[27] = -10;
+    lh[28] = -10;
+    lh[29] = -10;
     uh[0] = 100;
     uh[1] = 100;
     uh[2] = 100;
@@ -625,56 +595,26 @@ void deepc_acados_setup_nlp_in(deepc_solver_capsule* capsule, const int N, doubl
     uh[7] = 100;
     uh[8] = 100;
     uh[9] = 100;
-    uh[10] = 100;
-    uh[11] = 100;
-    uh[12] = 100;
-    uh[13] = 100;
-    uh[14] = 100;
-    uh[15] = 100;
-    uh[16] = 100;
-    uh[17] = 100;
-    uh[18] = 100;
-    uh[19] = 100;
-    uh[20] = 140;
-    uh[21] = 140;
-    uh[22] = 140;
-    uh[23] = 140;
-    uh[24] = 140;
-    uh[25] = 140;
-    uh[26] = 140;
-    uh[27] = 140;
-    uh[28] = 140;
-    uh[29] = 140;
-    uh[30] = 140;
-    uh[31] = 140;
-    uh[32] = 140;
-    uh[33] = 140;
-    uh[34] = 140;
-    uh[35] = 140;
-    uh[36] = 140;
-    uh[37] = 140;
-    uh[38] = 140;
-    uh[39] = 140;
-    uh[40] = 1.2;
-    uh[41] = 1.2;
-    uh[42] = 1.2;
-    uh[43] = 1.2;
-    uh[44] = 1.2;
-    uh[45] = 1.2;
-    uh[46] = 1.2;
-    uh[47] = 1.2;
-    uh[48] = 1.2;
-    uh[49] = 1.2;
-    uh[50] = 1.2;
-    uh[51] = 1.2;
-    uh[52] = 1.2;
-    uh[53] = 1.2;
-    uh[54] = 1.2;
-    uh[55] = 1.2;
-    uh[56] = 1.2;
-    uh[57] = 1.2;
-    uh[58] = 1.2;
-    uh[59] = 1.2;
+    uh[10] = 140;
+    uh[11] = 140;
+    uh[12] = 140;
+    uh[13] = 140;
+    uh[14] = 140;
+    uh[15] = 140;
+    uh[16] = 140;
+    uh[17] = 140;
+    uh[18] = 140;
+    uh[19] = 140;
+    uh[20] = 1.2;
+    uh[21] = 1.2;
+    uh[22] = 1.2;
+    uh[23] = 1.2;
+    uh[24] = 1.2;
+    uh[25] = 1.2;
+    uh[26] = 1.2;
+    uh[27] = 1.2;
+    uh[28] = 1.2;
+    uh[29] = 1.2;
 
     for (int i = 1; i < N; i++)
     {
@@ -756,41 +696,83 @@ static void deepc_acados_create_set_opts(deepc_solver_capsule* capsule)
     int globalization_full_step_dual = 0;
     ocp_nlp_solver_opts_set(nlp_config, capsule->nlp_opts, "globalization_full_step_dual", &globalization_full_step_dual);
 
-    double levenberg_marquardt = 0;
+    double levenberg_marquardt = 0.000001;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "levenberg_marquardt", &levenberg_marquardt);
 
     /* options QP solver */
-    int qp_solver_cond_N;const int qp_solver_cond_N_ori = 20;
-    qp_solver_cond_N = N < qp_solver_cond_N_ori ? N : qp_solver_cond_N_ori; // use the minimum value here
-    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_cond_N", &qp_solver_cond_N);
 
     int nlp_solver_ext_qp_res = 0;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "ext_qp_res", &nlp_solver_ext_qp_res);
 
     bool store_iterates = false;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "store_iterates", &store_iterates);
-    // set HPIPM mode: should be done before setting other QP solver options
-    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_hpipm_mode", "BALANCE");
+    int log_primal_step_norm = false;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "log_primal_step_norm", &log_primal_step_norm);
+
+    int log_dual_step_norm = false;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "log_dual_step_norm", &log_dual_step_norm);
+
+    double nlp_solver_tol_min_step_norm = 0;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "tol_min_step_norm", &nlp_solver_tol_min_step_norm);
 
 
+    bool use_constraint_hessian_in_feas_qp = false;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "use_constraint_hessian_in_feas_qp", &use_constraint_hessian_in_feas_qp);
 
-    int qp_solver_t0_init = 2;
-    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_t0_init", &qp_solver_t0_init);
+    int search_direction_mode = NOMINAL_QP;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "search_direction_mode", &search_direction_mode);
+
+    bool allow_direction_mode_switch_to_nominal = true;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "allow_direction_mode_switch_to_nominal", &allow_direction_mode_switch_to_nominal);
 
 
+    // set SQP specific options
+    double nlp_solver_tol_stat = 0.000001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "tol_stat", &nlp_solver_tol_stat);
 
+    double nlp_solver_tol_eq = 0.000001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "tol_eq", &nlp_solver_tol_eq);
 
-    int as_rti_iter = 1;
-    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "as_rti_iter", &as_rti_iter);
+    double nlp_solver_tol_ineq = 0.000001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "tol_ineq", &nlp_solver_tol_ineq);
 
-    int as_rti_level = 4;
-    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "as_rti_level", &as_rti_level);
+    double nlp_solver_tol_comp = 0.000001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "tol_comp", &nlp_solver_tol_comp);
 
-    int rti_log_residuals = 0;
-    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "rti_log_residuals", &rti_log_residuals);
+    int nlp_solver_max_iter = 100;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "max_iter", &nlp_solver_max_iter);
 
-    int rti_log_only_available_residuals = 0;
-    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "rti_log_only_available_residuals", &rti_log_only_available_residuals);
+    // set options for adaptive Levenberg-Marquardt Update
+    bool with_adaptive_levenberg_marquardt = false;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "with_adaptive_levenberg_marquardt", &with_adaptive_levenberg_marquardt);
+
+    double adaptive_levenberg_marquardt_lam = 5;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "adaptive_levenberg_marquardt_lam", &adaptive_levenberg_marquardt_lam);
+
+    double adaptive_levenberg_marquardt_mu_min = 0.0000000000000001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "adaptive_levenberg_marquardt_mu_min", &adaptive_levenberg_marquardt_mu_min);
+
+    double adaptive_levenberg_marquardt_mu0 = 0.001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "adaptive_levenberg_marquardt_mu0", &adaptive_levenberg_marquardt_mu0);
+
+    double adaptive_levenberg_marquardt_obj_scalar = 2;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "adaptive_levenberg_marquardt_obj_scalar", &adaptive_levenberg_marquardt_obj_scalar);
+
+    bool eval_residual_at_max_iter = false;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "eval_residual_at_max_iter", &eval_residual_at_max_iter);
+
+    // QP scaling
+    double qpscaling_ub_max_abs_eig = 100000;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qpscaling_ub_max_abs_eig", &qpscaling_ub_max_abs_eig);
+
+    double qpscaling_lb_norm_inf_grad_obj = 0.0001;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qpscaling_lb_norm_inf_grad_obj", &qpscaling_lb_norm_inf_grad_obj);
+
+    qpscaling_scale_objective_type qpscaling_scale_objective = NO_OBJECTIVE_SCALING;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qpscaling_scale_objective", &qpscaling_scale_objective);
+
+    ocp_nlp_qpscaling_constraint_type qpscaling_scale_constraints = NO_CONSTRAINT_SCALING;
+    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qpscaling_scale_constraints", &qpscaling_scale_constraints);
 
     bool with_anderson_acceleration = false;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "with_anderson_acceleration", &with_anderson_acceleration);
@@ -802,12 +784,6 @@ static void deepc_acados_create_set_opts(deepc_solver_capsule* capsule)
 
     int print_level = 0;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "print_level", &print_level);
-    int qp_solver_cond_ric_alg = 1;
-    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_cond_ric_alg", &qp_solver_cond_ric_alg);
-
-    int qp_solver_ric_alg = 1;
-    ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "qp_ric_alg", &qp_solver_ric_alg);
-
 
     int ext_cost_num_hess = 0;
     for (int i = 0; i < N; i++)
@@ -920,22 +896,8 @@ int deepc_acados_create_with_discretization(deepc_solver_capsule* capsule, int N
  */
 int deepc_acados_update_qp_solver_cond_N(deepc_solver_capsule* capsule, int qp_solver_cond_N)
 {
-    // 1) destroy solver
-    ocp_nlp_solver_destroy(capsule->nlp_solver);
-
-    // 2) set new value for "qp_cond_N"
-    const int N = capsule->nlp_solver_plan->N;
-    if(qp_solver_cond_N > N)
-        printf("Warning: qp_solver_cond_N = %d > N = %d\n", qp_solver_cond_N, N);
-    ocp_nlp_solver_opts_set(capsule->nlp_config, capsule->nlp_opts, "qp_cond_N", &qp_solver_cond_N);
-
-    // 3) continue with the remaining steps from deepc_acados_create_with_discretization(...):
-    // -> 8) create solver
-    capsule->nlp_solver = ocp_nlp_solver_create(capsule->nlp_config, capsule->nlp_dims, capsule->nlp_opts, capsule->nlp_in);
-
-    // -> 9) do precomputations
-    int status = deepc_acados_create_precompute(capsule);
-    return status;
+    printf("\nacados_update_qp_solver_cond_N() not implemented, since no partial condensing solver is used!\n\n");
+    exit(1);
 }
 
 
@@ -966,14 +928,6 @@ int deepc_acados_reset(deepc_solver_capsule* capsule, int reset_qp_solver_mem)
             ocp_nlp_out_set(nlp_config, nlp_dims, nlp_out, nlp_in, i, "pi", buffer);
         }
     }
-    // get qp_status: if NaN -> reset memory
-    int qp_status;
-    ocp_nlp_get(capsule->nlp_solver, "qp_status", &qp_status);
-    if (reset_qp_solver_mem || (qp_status == 3))
-    {
-        // printf("\nin reset qp_status %d -> resetting QP memory\n", qp_status);
-        ocp_nlp_solver_reset_qp_memory(nlp_solver, nlp_in, nlp_out);
-    }
 
     free(buffer);
     return 0;
@@ -986,7 +940,7 @@ int deepc_acados_update_params(deepc_solver_capsule* capsule, int stage, double 
 {
     int solver_status = 0;
 
-    int casadi_np = 7760;
+    int casadi_np = 2430;
     if (casadi_np != np) {
         printf("acados_update_params: trying to set %i parameters for external functions."
             " External function has %i parameters. Exiting.\n", np, casadi_np);
@@ -1128,16 +1082,6 @@ void deepc_acados_print_stats(deepc_solver_capsule* capsule)
     int nrow = nlp_iter+1 < stat_m ? nlp_iter+1 : stat_m;
 
 
-    printf("iter\tqp_stat\tqp_iter\n");
-    for (int i = 0; i < nrow; i++)
-    {
-        for (int j = 0; j < stat_n + 1; j++)
-        {
-            tmp_int = (int) stat[i + j * nrow];
-            printf("%d\t", tmp_int);
-        }
-        printf("\n");
-    }
 }
 
 int deepc_acados_custom_update(deepc_solver_capsule* capsule, double* data, int data_len)

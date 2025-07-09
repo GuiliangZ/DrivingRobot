@@ -45,6 +45,7 @@ OCP_SRC=
 
 
 OCP_SRC+= deepc_constraints/deepc_constr_h_fun_jac_uxt_zt.c
+OCP_SRC+= deepc_constraints/deepc_constr_h_fun_jac_uxt_zt_hess.c
 OCP_SRC+= deepc_constraints/deepc_constr_h_fun.c
 OCP_SRC+= deepc_cost/deepc_cost_ext_cost_0_fun.c
 OCP_SRC+= deepc_cost/deepc_cost_ext_cost_0_fun_jac_hess.c
@@ -77,12 +78,10 @@ INCLUDE_PATH = /home/guiliang/acados/include
 LIB_PATH = /home/guiliang/acados/lib
 
 # preprocessor flags for make's implicit rules
-CPPFLAGS += -DACADOS_WITH_QPOASES
 CPPFLAGS+= -I$(INCLUDE_PATH)
 CPPFLAGS+= -I$(INCLUDE_PATH)/acados
 CPPFLAGS+= -I$(INCLUDE_PATH)/blasfeo/include
 CPPFLAGS+= -I$(INCLUDE_PATH)/hpipm/include
-CPPFLAGS+= -I $(INCLUDE_PATH)/qpOASES_e/
 
 
 # define the c-compiler flags for make's implicit rules
@@ -100,7 +99,7 @@ LDLIBS+= -lacados
 LDLIBS+= -lhpipm
 LDLIBS+= -lblasfeo
 LDLIBS+= -lm
-LDLIBS+= -lqpOASES_e
+LDLIBS+= 
 
 # libraries
 LIBACADOS_SOLVER=libacados_solver_deepc.so
@@ -139,8 +138,8 @@ ocp_cython_o: ocp_cython_c
 	-I $(INCLUDE_PATH)/blasfeo/include/ \
 	-I $(INCLUDE_PATH)/hpipm/include/ \
 	-I $(INCLUDE_PATH) \
-	-I /home/guiliang/miniforge3/envs/myenv/lib/python3.10/site-packages/numpy/_core/include \
-	-I /home/guiliang/miniforge3/envs/myenv/include/python3.10 \
+	-I /home/guiliang/anaconda3/envs/drivingRobot/lib/python3.13/site-packages/numpy/_core/include \
+	-I /home/guiliang/anaconda3/envs/drivingRobot/include/python3.13 \
 	acados_ocp_solver_pyx.c \
 
 ocp_cython: ocp_cython_o

@@ -15,17 +15,19 @@ lsmod | grep kvaser_usb
 sudo modprobe can && sudo modprobe can_raw       # generic CAN support
 sudo modprobe mttcan                             # on-board CAN controller
 sudo modprobe kvaser_usb                         # USB Kvaser Leaf
-
-# Bring up the on-board CAN as can0 @ 500 kbps
+sudo modprobe can       # core CAN support
+sudo modprobe can_raw   # raw-socket protocol
+sudo modprobe can_dev   # network interface “canX” support
+sudo modprobe kvaser_usb
 sudo ip link set can0 down                         # if it was already up
 sudo ip link set can0 type can bitrate 500000
 sudo ip link set can0 up
-
-# Bring up the USB Kvaser as can1 @ 500 kbps
-# (replace ‘can1’ with whatever `ip link` shows if it’s different)
 sudo ip link set can1 down
 sudo ip link set can1 type can bitrate 500000
 sudo ip link set can1 up
+i2cdetect -l
+ls /sys/class/net/ | grep can
+
 sudo ip link set can2 down                         # if it was already up
 sudo ip link set can2 type can bitrate 500000
 sudo ip link set can2 up

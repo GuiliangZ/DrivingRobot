@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BaseLine_MultiDC_VehCAN.py
+BaseLine_Computer.py
 
 Discrete PID + Feedforward controller converted from Simulink to Python.
 Runs at 100 Hz (T_s = 0.01 s) to track a reference speed profile, reading v_meas from Dyno_CAN, BMS_socMIN from Veh_CAN
@@ -32,17 +32,28 @@ PID structure (per Simulink):
   If u[k] <  0 → PWM accel channel (0) = 0, brake (4) = |u|
 
 Run:
-  python3 BaseLine_MultiDC_VehCAN.py
+  python3 BaseLine_Computer.py
 
 Required setup:
     pip install numpy scipy cantools python-can adafruit-circuitpython-pca9685
     sudo pip install Jetson.GPIO
 # !!!!!!!!!! Always run this command line in the terminal to start the CAN reading: !!!!!!!!!
-    sudo ip link set can0 up type can bitrate 500000 dbitrate 1000000 fd on
-    sudo ip link set can1 up type can bitrate 500000 dbitrate 1000000 fd on
-    sudo ip link set can2 up type can bitrate 500000 dbitrate 1000000 fd on
-    i2cdetect -l (find what the number i2c device lie and change that parameter)
-"""
+sudo modprobe can && sudo modprobe can_raw       # generic CAN support
+sudo modprobe mttcan                             # on-board CAN controller
+sudo modprobe kvaser_usb                         # USB Kvaser Leaf
+sudo modprobe can       # core CAN support
+sudo modprobe can_raw   # raw-socket protocol
+sudo modprobe can_dev   # network interface “canX” support
+sudo modprobe kvaser_usb
+sudo ip link set can0 down                         # if it was already up
+sudo ip link set can0 type can bitrate 500000
+sudo ip link set can0 up
+sudo ip link set can1 down
+sudo ip link set can1 type can bitrate 500000
+sudo ip link set can1 up
+i2cdetect -l
+ls /sys/class/net/ | grep can
+    """
 
 import os
 import time
@@ -59,7 +70,9 @@ from smbus2 import SMBus
 import cantools
 import can
 
+from deepc.utils_deepc import *
 # ────────────────────────── GLOBALS FOR CAN THREAD ─────────────────────────────
+algorithm_name = "Baseline_PID_Comp"
 latest_speed = None           # Measured speed (kph) from CAN
 latest_force = None           # Measured force (N) from CAN (unused here)
 dyno_can_running  = True      # Flag to stop the CAN thread on shutdown
@@ -69,14 +82,14 @@ BMS_socMin = None            # Measured current vehicle SOC from Vehicle CAN
 # veh_can_running  = False 
 
 # ——— CP2112 I²C setup ———
-CP2112_BUS   = 12         # e.g. /dev/i2c-3
+CP2112_BUS   = 13         # e.g. /dev/i2c-3
 PCA9685_ADDR = 0x40      # default PCA9685 address
 # PCA9685 register addresses
 MODE1_REG    = 0x00
 PRESCALE_REG = 0xFE
 LED0_ON_L    = 0x06     # base address for channel 0
 
-def init_pca9685(bus: SMBus, freq_hz: float = 1000.0):
+def init_pca9685(bus: SMBus, freq_hz: float = 1500.0):
     """
     Reset PCA9685 and set PWM frequency.
     """
@@ -405,9 +418,9 @@ if __name__ == "__main__":
         prev_ref_speed = None                                           # Track previous reference speed for derivative on ref (if needed)
         log_data       = []                                             # Prepare logging
         # Record loop‐start time so we can log elapsed time from 0.0
-        next_time      = time.time()
-        now            = time.time()
-        t0             = time.time()
+        next_time      = time.perf_counter()
+        now            = time.perf_counter()
+        t0             = time.perf_counter()
         print(f"Now time: {now},  next_time: {next_time}")
         print(f"\n[Main] Starting cycle '{cycle_key}' on {veh_modelName}, duration={ref_time[-1]:.2f}s")
         
@@ -415,7 +428,7 @@ if __name__ == "__main__":
         print("[Main] Entering 100 Hz control loop. Press Ctrl+C to exit.\n")
         try:
             while True:
-                now = time.time()
+                now = time.perf_counter()
                 if now < next_time:
                     time.sleep(next_time - now)                
                 elapsed_time = now - t0                 # Compute elapsed time since loop start
@@ -492,6 +505,7 @@ if __name__ == "__main__":
                     set_duty_cycle(bus, 0, 0.0)                                    # ensure brake channel is zero
                     set_duty_cycle(bus, 4, -u)                                     # channel 4 = brake
 
+                actual_elapsed_time = round((time.perf_counter() - now)*1000,3)
                 # ── 9) Debug printout ─────────────────────────────────────────────
                 print(
                     f"[{elapsed_time:.3f}] "
@@ -501,7 +515,8 @@ if __name__ == "__main__":
                     f"u={u:+6.2f}%,"
                     f"F_dyno={F_meas:6.2f} N,"
                     # f"BMS_socMin={BMS_socMin:6.2f} %,"
-                    f"SOC_CycleStarting={SOC_CycleStarting} %"
+                    f"SOC_CycleStarting={SOC_CycleStarting} %, "
+                    f"actual_elapsed_time_per_loop={actual_elapsed_time:6.3f} ms, "
                 )
 
                 # ── 10) Save state for next iteration ──────────────────────────────
@@ -548,7 +563,7 @@ if __name__ == "__main__":
                 datetime = datetime.now()
                 df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
                 timestamp_str = datetime.strftime("%H%M_%m%d")
-                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start.xlsx"
+                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{algorithm_name}.xlsx"
                 log_dir = os.path.join(base_folder, "Log_DriveRobot")
                 os.makedirs(log_dir, exist_ok=True)     
                 excel_path = os.path.join(log_dir, excel_filename)
