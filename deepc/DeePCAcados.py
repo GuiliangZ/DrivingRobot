@@ -120,7 +120,7 @@ class deepctools():
                 ctools.entry('Yf',   shape=tuple([self.y_dim * self.Np, self.g_dim])),
                 ctools.entry('lambda_g', shape=tuple([self.g_dim,       self.g_dim ])),
                 ctools.entry('lambda_y', shape=tuple([self.y_dim*self.Tini,       self.y_dim*self.Tini ])),
-                # ctools.entry('lambda_u', shape=tuple([self.u_dim*self.Tini,       self.u_dim*self.Tini ])),
+                ctools.entry('lambda_u', shape=tuple([self.u_dim*self.Tini,       self.u_dim*self.Tini ])),
                 # tracking‐error weight and regularization scalar
                 ctools.entry('Q',        shape=tuple([self.y_dim * self.Np,    self.y_dim * self.Np])),  # diagonal entries of Q
                 ctools.entry('R',        shape=tuple([self.u_dim * self.Np,    self.u_dim * self.Np])),  # scalar weight on g-regularization
@@ -153,18 +153,18 @@ class deepctools():
                     dim = self.y_dim
                     lb = ineqconbd['lby']
                     ub = ineqconbd['uby']
-                elif varname == 'du':
-                    # print(f'H_all is{H_all}')
-                    dim = 1
-                    lb = ineqconbd['lbdu']
-                    ub = ineqconbd['ubdu']
-                    idx_H = [] 
+                # elif varname == 'du':
+                #     # print(f'H_all is{H_all}')
+                #     dim = 1
+                #     lb = ineqconbd['lbdu']
+                #     ub = ineqconbd['ubdu']
+                #     idx_H = [] 
                 else:
                     raise ValueError("%s variable not exist, should be 'u' or/and 'y'!" % varname)
 
                 idx_H = [v + i * dim for i in range(self.Np) for v in idx]
-                if varname != 'du':
-                    Hc_list.append(H_all[idx_H, :])
+                # if varname != 'du':
+                Hc_list.append(H_all[idx_H, :])
                 lbc_list.append(np.tile(lb, self.Np))
                 ubc_list.append(np.tile(ub, self.Np))
 
@@ -190,8 +190,8 @@ class deepctools():
             raise ValueError(f'OCP do not have enough degrees of freedom | Should: g_dim > (u_dim + y_dim) * Tini, but got: {self.g_dim} <= {(self.u_dim + self.y_dim) * self.Tini}!')
 
         # define parameters and decision variable
-        # uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]
-        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, Q, R = self.parameters[...]
+        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]
+        # uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, Q, R = self.parameters[...]
         g, = self.optimizing_target[...]  # data are stored in list [], notice that ',' cannot be missed
 
         # To get du
@@ -214,7 +214,7 @@ class deepctools():
             cs.reshape(Uf_cur, -1, 1),
             cs.reshape(Yf_cur, -1, 1),
             cs.reshape(Q, -1, 1), cs.reshape(R, -1, 1),
-            cs.reshape(lambda_y, -1, 1), cs.reshape(lambda_g, -1, 1), #cs.reshape(lambda_u, -1, 1), 
+            cs.reshape(lambda_y, -1, 1), cs.reshape(lambda_g, -1, 1), cs.reshape(lambda_u, -1, 1), 
         )
         model.disc_dyn_expr = model.x          # shape (g_dim, 1) # zero‐dynamics: ẋ = 0. # Using purely hankel-based styatic DeePC - In this setup you’re treating your entire decision vector g as a “state” with zero dynamics so that Acados turns your one‐step OCP into a pure static QP
 
@@ -233,20 +233,25 @@ class deepctools():
         print(f'The shape of r1:{r1.shape}, r2:{r2.shape},r3:{r3.shape},r4:{r4.shape},r5:{r5.shape}')
         res = cs.vertcat(r1, r2, r3, r4, r5)
         # ocp.cost.cost_type = 'LINEAR_LS'        # For the LINEAR_LS, the weight matrix should be np array instead of casadi matrix, so should use "EXTERNAL" instead
-        # H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + Up_cur.T @ lambda_u @ Up_cur + lambda_g
-        H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + lambda_g
-        f = - Yp_cur.T @ lambda_y @ yini - Yf_cur.T @ Q @ yref  # - self.Uf.T @ self.R @ uref
+        H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + Up_cur.T @ lambda_u @ Up_cur + lambda_g
+        # H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + lambda_g
+        f = - Yp_cur.T @ lambda_y @ yini - Yf_cur.T @ Q @ yref - Up_cur.T @ lambda_u @ uini  
         obj = 0.5 * cs.mtimes(cs.mtimes(g.T, H), g) + cs.mtimes(f.T, g)
         ocp.cost.cost_type = 'EXTERNAL'
         ocp.cost.cost_type_e = 'EXTERNAL'
         model.cost_expr_ext_cost   = obj
         model.cost_expr_ext_cost_e = obj
 
+        # Add equality constraint: Up g - uini == 0
+        h_eq = cs.reshape(cs.mtimes(Up_cur, g) - uini, (-1, 1))  # Shape: (u_dim * Tini, 1)
+
         if ineq_flag:
             # — build a single SX vector h = [Hc@g; du]
             h1 = cs.reshape(Hc @ g, (-1, 1))
-            h2 = cs.reshape(du,   (-1, 1))
-            h  = cs.vertcat(h1, h2)      # now definitely (n_rows, 1)
+            # h2 = cs.reshape(du,     (-1, 1))
+            # h  = cs.vertcat(h1,     h2)      # now definitely (n_rows, 1)
+            # h = cs.vertcat(h1, h2, h_eq)
+            h = h1
             lh_arr = np.array(lbc_ineq)
             uh_arr = np.array(ubc_ineq)
             # print(f"h_sx size: ({h.size1()}×{h.size2()})")
@@ -262,23 +267,27 @@ class deepctools():
         else:
             # — no constraints: empty h, empty bounds
             ocp.constraints.constr_type = 'BGH'
-            ocp.constraints.con_h_expr      = cs.SX.zeros(0, 1)            # zero-row SX
+            ocp.constraints.con_h_expr  = cs.SX.zeros(0, 1)            # zero-row SX
             ocp.constraints.lh          = np.zeros(0)
             ocp.constraints.uh          = np.zeros(0)
 
-        ocp.solver_options.qp_solver          = 'PARTIAL_CONDENSING_HPIPM' # also could try 'FULL_CONDENSING_QPOASES'
-        # ocp.solver_options.qp_solver          = "FULL_CONDENSING_HPIPM"
-        # ocp.solver_options.qp_solver          = 'FULL_CONDENSING_QPOASES'
-
+        ocp.solver_options.qp_solver          = "FULL_CONDENSING_HPIPM"
         ocp.solver_options.hessian_approx       = 'EXACT'                    # 'GAUSS_NEWTON' for "LINEAR_LS" cost_type
-        # ocp.solver_options.ext_cost_num_hess  = True                       # turn on numeric external cost Hessians
         ocp.solver_options.integrator_type      = 'DISCRETE'                 # Using purely hankel-based styatic DeePC, best choice-'DISCRETE'. actual dynamic in OCP: 'ERK'-classic Runge-Kutta 4. Options: 'IRK', 'GNSF', 'LIFTED_IRK', 'DISCRETE
         ocp.solver_options.nlp_solver_type      = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
-        # ocp.solver_options.nlp_solver_type      = "SQP_WITH_FEASIBLE_QP"    # 'SQP', 'DDP'
         ocp.solver_options.levenberg_marquardt = 1e-6
-        ocp.dims.N                              = self.Np                    # number of shooting intervals = prediction steps
         ocp.solver_options.tf                   = 1.0                        # For s discrete dynamics, static QP in g, tf is unused - can leave it at the default(1.0)
-
+        ocp.solver_options.qp_solver_warm_start = 1                         # Enable primal-dual warm-starting for faster subsequent solves.
+        ocp.solver_options.print_level = 0                                  # Minimize output for real-time speed; set to 1-2 for debugging.
+        # ocp.solver_options.nlp_solver_max_iter = 1                          # Enforce RTI behavior: exactly one iteration per call.
+        
+        # ocp.solver_options.qp_solver          = 'PARTIAL_CONDENSING_HPIPM' # also could try 'FULL_CONDENSING_QPOASES'        
+        # ocp.solver_options.qp_solver          = 'FULL_CONDENSING_QPOASES'
+        # ocp.solver_options.ext_cost_num_hess  = True                       # turn on numeric external cost Hessians
+        # ocp.solver_options.nlp_solver_type      = "SQP_WITH_FEASIBLE_QP"    # 'SQP', 'DDP'
+        # ocp.solver_options.qp_solver_cond_N = self.Np                       # For condensing; match N for efficiency.
+        # ocp.dims.N                              = self.Np                    # number of shooting intervals = prediction steps
+  
         # Initilize g and all the parameters with zero for acados initial build, will update those parameters at run time
         n_p = ocp.model.p.numel()                                           # total number of entries in the SX parameter vector
         ocp.parameter_values = np.zeros(n_p)                                # or fill with your actual parameter data
@@ -307,8 +316,8 @@ class deepctools():
             )
         print('>> Acados solver ready (recompile=' + str(recompile_solver) + ')')
     
-    # def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val, g_prev=None):
-    def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, g_prev=None):
+    def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val, g_prev=None):
+    # def acados_solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, g_prev=None):
         """
             solver solve the nlp for one time
             uini, yini:  [array]   | (dim*Tini, 1)
@@ -327,27 +336,29 @@ class deepctools():
             Up_cur.ravel(), Yp_cur.ravel(),
             Uf_cur.ravel(), Yf_cur.ravel(),
             Q_val.ravel(),    R_val.ravel(),
-            lambda_g_val.ravel(),   lambda_y_val.ravel(),   # lambda_u_val.ravel(),
+            lambda_g_val.ravel(),   lambda_y_val.ravel(), lambda_u_val.ravel(),
         ])
-
-        # give acados initial guess
-        # # stack your prediction matrices row-wise:
-        # A = np.vstack([Up_cur, Yp_cur])             # shape ((u_dim+y_dim)*Tini,  g_dim)
-        # # stack your data vectors:
-        # b = np.vstack([uini, yini]).ravel()         # shape ((u_dim+y_dim)*Tini,)
-
-        # # solve the (unregularized) least-squares problem
-        # g_default, *_ = np.linalg.lstsq(A, b, rcond=None)
-        # # g_default is now a 1-D array of length g_dim
-        # g_default = g_default.ravel()   
-        g_default = np.linalg.pinv(np.vstack([Up_cur, Yp_cur, Yf_cur])) @ np.vstack([uini, yini, yref])       #psuedo-inverse to get g_default initial hot-start guess
-        g_default = g_default.ravel()
 
         # choose hot-start if available
         if g_prev is not None:
             # ensure the shape matches
             g0 = g_prev.ravel()
         else:
+            # give acados initial guess
+            sqrt_lambda_u = np.sqrt(lambda_u_val)
+            sqrt_lambda_y = np.sqrt(lambda_y_val)
+            sqrt_lambda_g = np.sqrt(lambda_g_val)
+            # Weighted stack for least-squares
+            A_weighted = np.vstack([sqrt_lambda_u @ Up_cur, sqrt_lambda_y @ Yp_cur])
+            b_weighted = np.vstack([sqrt_lambda_u @ uini, sqrt_lambda_y @ yini])
+            if lambda_g_val[0,0] > 0:
+                I_g = np.eye(self.g_dim)
+                A_aug = np.vstack([A_weighted, sqrt_lambda_g @ I_g])
+                b_aug = np.vstack([b_weighted, np.zeros((self.g_dim, 1))])
+                g_default = np.linalg.lstsq(A_aug, b_aug, rcond=None)[0]
+            else:
+                g_default = np.linalg.lstsq(A_weighted, b_weighted, rcond=None)[0]
+            g_default = g_default.ravel()
             g0 = g_default
         self.solver.set( 0, "x", g0)
         self.solver.set( 0, "p", parameters )

@@ -50,20 +50,18 @@ extern "C" {
   #endif
 #endif
 
-static const casadi_int casadi_s0[3] = {30, 1, 1};
+static const casadi_int casadi_s0[3] = {21, 1, 1};
 static const casadi_int casadi_s1[3] = {0, 1, 1};
-static const casadi_int casadi_s2[3] = {2430, 1, 1};
-static const casadi_int casadi_s3[63] = 
-  {30, 30, 0, 1, 2, 3, 4, 5,
+static const casadi_int casadi_s2[3] = {1711, 1, 1};
+static const casadi_int casadi_s3[45] = 
+  {21, 21, 0, 1, 2, 3, 4, 5,
   6, 7, 8, 9, 10, 11, 12, 13,
   14, 15, 16, 17, 18, 19, 20, 21,
-  22, 23, 24, 25, 26, 27, 28, 29,
-  30, 0, 1, 2, 3, 4, 5, 6,
-  7, 8, 9, 10, 11, 12, 13, 14,
-  15, 16, 17, 18, 19, 20, 21, 22,
-  23, 24, 25, 26, 27, 28, 29};
+  0, 1, 2, 3, 4, 5, 6, 7,
+  8, 9, 10, 11, 12, 13, 14, 15,
+  16, 17, 18, 19, 20};
 
-/* deepc_dyn_disc_phi_fun_jac:(i0[30],i1[0],i2[2430])->(o0[30],o1[30x30,30nz]) */
+/* deepc_dyn_disc_phi_fun_jac:(i0[21],i1[0],i2[1711])->(o0[21],o1[21x21,21nz]) */
 static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem) {
   casadi_real a0;
   a0=arg[0]? arg[0][0] : 0;
@@ -108,24 +106,6 @@ static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw,
   if (res[0]!=0) res[0][19]=a0;
   a0=arg[0]? arg[0][20] : 0;
   if (res[0]!=0) res[0][20]=a0;
-  a0=arg[0]? arg[0][21] : 0;
-  if (res[0]!=0) res[0][21]=a0;
-  a0=arg[0]? arg[0][22] : 0;
-  if (res[0]!=0) res[0][22]=a0;
-  a0=arg[0]? arg[0][23] : 0;
-  if (res[0]!=0) res[0][23]=a0;
-  a0=arg[0]? arg[0][24] : 0;
-  if (res[0]!=0) res[0][24]=a0;
-  a0=arg[0]? arg[0][25] : 0;
-  if (res[0]!=0) res[0][25]=a0;
-  a0=arg[0]? arg[0][26] : 0;
-  if (res[0]!=0) res[0][26]=a0;
-  a0=arg[0]? arg[0][27] : 0;
-  if (res[0]!=0) res[0][27]=a0;
-  a0=arg[0]? arg[0][28] : 0;
-  if (res[0]!=0) res[0][28]=a0;
-  a0=arg[0]? arg[0][29] : 0;
-  if (res[0]!=0) res[0][29]=a0;
   a0=1.;
   if (res[1]!=0) res[1][0]=a0;
   if (res[1]!=0) res[1][1]=a0;
@@ -148,15 +128,6 @@ static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw,
   if (res[1]!=0) res[1][18]=a0;
   if (res[1]!=0) res[1][19]=a0;
   if (res[1]!=0) res[1][20]=a0;
-  if (res[1]!=0) res[1][21]=a0;
-  if (res[1]!=0) res[1][22]=a0;
-  if (res[1]!=0) res[1][23]=a0;
-  if (res[1]!=0) res[1][24]=a0;
-  if (res[1]!=0) res[1][25]=a0;
-  if (res[1]!=0) res[1][26]=a0;
-  if (res[1]!=0) res[1][27]=a0;
-  if (res[1]!=0) res[1][28]=a0;
-  if (res[1]!=0) res[1][29]=a0;
   return 0;
 }
 

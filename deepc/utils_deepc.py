@@ -333,18 +333,18 @@ def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_id
     # desired slice is [start:end] with width = end - start = g_dim
     half  = g_dim // 2
     start = hankel_idx - half
-    end   = hankel_idx + half
+    end   = start + g_dim
     width = end - start
 
     # allocate zero‐padded output blocks
-    Up_cur = np.zeros((Tini,            width), dtype=Up.dtype)
-    Uf_cur = np.zeros((Tini,            width), dtype=Uf.dtype)
-    Yp_cur = np.zeros((THorizon, width), dtype=Yp.dtype)
-    Yf_cur = np.zeros((THorizon, width), dtype=Yf.dtype)
+    Up_cur = np.zeros((Tini,        width), dtype=Up.dtype)
+    Uf_cur = np.zeros((THorizon,    width), dtype=Uf.dtype)
+    Yp_cur = np.zeros((Tini,        width), dtype=Yp.dtype)
+    Yf_cur = np.zeros((THorizon,    width), dtype=Yf.dtype)
 
     # clamp source columns to [0, max_col)
     max_col = Up.shape[1]
-    src_start = max(start,               0)
+    src_start = max(start, 0)
     src_end   = min(end,   max_col)
 
     # where in the padded block these columns should go
@@ -353,8 +353,8 @@ def hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_id
 
     # copy the in-bounds slice into the zero blocks
     Up_cur[:,      dst_start:dst_end] = Up[:Tini,         src_start:src_end]
-    Uf_cur[:,      dst_start:dst_end] = Uf[:Tini,         src_start:src_end]
-    Yp_cur[:,      dst_start:dst_end] = Yp[:THorizon,     src_start:src_end]
+    Uf_cur[:,      dst_start:dst_end] = Uf[:THorizon,     src_start:src_end]
+    Yp_cur[:,      dst_start:dst_end] = Yp[:Tini,         src_start:src_end]
     Yf_cur[:,      dst_start:dst_end] = Yf[:THorizon,     src_start:src_end]
 
     return Up_cur, Uf_cur, Yp_cur, Yf_cur

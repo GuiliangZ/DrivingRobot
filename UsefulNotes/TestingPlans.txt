@@ -1,0 +1,14 @@
+07/07/2025
+
+1. In Baseline_Computer.py:
+	a. test if SOC_STOP feature works - it will automatically stop at specific SOC (SOC_Stop)
+	b. test if CP2112 and PCA9685 can work flawlessly on a personal computer instead of Jetson
+	c. Modify the Ts (system updating frequency) to find the best minimum Ts - reduce I value in the PID gains as change of the system bandwidth will change the performance of the PID controller and the gains should change accordingly. The P gains was ot affected that much by the frequency. The lower Ts we get, the more play room we have on the DeePC calculation time.
+	d. Ideally collect the data use newly tunned PID controller with new slower frequency from 100% - 80% SOC running on consecutive WLTP, and repeat the test with same initial condition using DeePC algorithm. - compile it once to generate the C code - which may take longer, and then use the previously generated solver at run time in the later run. (with the same DeePC parameters setup) - everytime updating DeePC parameters, need to recompile. 
+	e. could also try PID auto-tunning block for find the best PID values
+	f. PID + DeePC transition algorithm - combine PID + DeePC - use PID to collect data on the fly and use DeePC when enough data is available. 
+	
+	
+07/09/2025
+
+1. I have done a frequency sweep with baseline code. It seems from 0.01 - 0.1, it performed fairly well, and it start to degrade at 0.2. This helps to determine the operating frequency of DeePC, with Tini = 20, Ts = 0.1, give 2s. Ts = 0.2, give 4s. The problem comes the tradeoff of how long is the data series to unique identify the current states - 2s or 4s? and how much time does DeePC Acados solver need for given parameter size? Need to do more research on Acados. hankel_subB_size doesn't need to be to large, because when you set it exactly Tini+THorizon, it essential use the data block around that operating point. A typical reasonable combination is (20,20,89), (10,10,49), (5,5,29), depend on the Ts, the vision is Ts * Tini s/Ts * THorizon. 

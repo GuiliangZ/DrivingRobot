@@ -1,0 +1,44 @@
+# Gist:!! make sure the key in host computer location ~/.ssh/id_ed25519.pub is actually in pi's home/guiliang/.ssh/authorized_keys
+
+# Generate SSH key on host computer
+ls -l ~/.ssh/id_*.pub
+ssh-keygen -t ed25519 -C "guiliang@ubuntu-(date)"
+
+# While the Pi's SD card was plugged in, try the following command:
+
+sudo mkdir -p /mnt/rootfs
+sudo mount /dev/sda2 /mnt/rootfs
+# Mount and touch the boot partition if you haven't done it yet
+sudo mkdir -p /mnt/boot
+sudo mount /dev/sda1 /mnt/boot          # use the correct device name
+sudo touch /mnt/boot/ssh
+
+USER=guiliang                         # replace with the name you found
+sudo mkdir -p /mnt/rootfs/home/$USER/.ssh
+sudo cp ~/.ssh/id_ed25519.pub /mnt/rootfs/home/$USER/.ssh/authorized_keys
+sudo chown -R 1000:1000 /mnt/rootfs/home/$USER/.ssh   # 1000 is usually first user
+sudo chmod 700  /mnt/rootfs/home/$USER/.ssh
+sudo chmod 600  /mnt/rootfs/home/$USER/.ssh/authorized_keys
+
+ssh guiliang@raspberrypi.local
+
+# This will copy the ssh-key from host computer to the RPi while at reboot. 
+
+sudo mkdir -p /mnt/rootfs/home/pi/.ssh
+sudo cp ~/.ssh/id_ed25519.pub /mnt/rootfs/home/pi/.ssh/authorized_keys
+sudo chmod 700 /mnt/rootfs/home/pi/.ssh
+sudo chmod 600 /mnt/rootfs/home/pi/.ssh/authorized_keys
+sudo chown -R 1000:1000 /mnt/rootfs/home/pi/.ssh
+sudo touch /mnt/rootfs/boot/ssh    # ← or mount /boot separately if needed
+
+USER=<USER>                         # replace with the name you found
+sudo mkdir -p /mnt/rootfs/home/$USER/.ssh
+sudo cp ~/.ssh/id_ed25519.pub /mnt/rootfs/home/$USER/.ssh/authorized_keys
+sudo chown -R 1000:1000 /mnt/rootfs/home/$USER/.ssh   # 1000 is usually first user
+sudo chmod 700  /mnt/rootfs/home/$USER/.ssh
+sudo chmod 600  /mnt/rootfs/home/$USER/.ssh/authorized_keys
+
+ssh <USER>@raspberrypi.local
+
+
+

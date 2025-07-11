@@ -82,7 +82,7 @@ BMS_socMin = None            # Measured current vehicle SOC from Vehicle CAN
 # veh_can_running  = False 
 
 # ——— CP2112 I²C setup ———
-CP2112_BUS   = 13         # e.g. /dev/i2c-3
+CP2112_BUS   = 17         # e.g. /dev/i2c-3
 PCA9685_ADDR = 0x40      # default PCA9685 address
 # PCA9685 register addresses
 MODE1_REG    = 0x00
@@ -380,7 +380,7 @@ if __name__ == "__main__":
     SOC_CycleStarting = 0.0     # Managing Vehicle SOC
     SOC_Stop = 2.2              # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
 
-    Ts = 0.01                   # 100 Hz main control loop updating rate - Sampling time 
+    Ts = 0.03                   # 100 Hz main control loop updating rate - Sampling time 
 
     for idx, cycle_key in enumerate(cycle_keys):
         # Stop the test if the vehicle SOC is too low to prevent draining the vehicle
@@ -514,7 +514,7 @@ if __name__ == "__main__":
                     f"P={P_term:+6.2f}, I={I_out:+6.2f}, D={D_term:+6.2f}, FF={FF_term:+6.2f}, "
                     f"u={u:+6.2f}%,"
                     f"F_dyno={F_meas:6.2f} N,"
-                    # f"BMS_socMin={BMS_socMin:6.2f} %,"
+                    f"BMS_socMin={BMS_socMin:6.2f} %,"
                     f"SOC_CycleStarting={SOC_CycleStarting} %, "
                     f"actual_elapsed_time_per_loop={actual_elapsed_time:6.3f} ms, "
                 )
@@ -533,7 +533,7 @@ if __name__ == "__main__":
                     "v_ref":     rspd_now,
                     "v_meas":    v_meas,
                     "u":         u,
-                    # "BMS_socMin":BMS_socMin,
+                    "BMS_socMin":BMS_socMin,
                     "SOC_CycleStarting":SOC_CycleStarting,
                     "error":     e_k,
                     "error_fut": e_fut,
@@ -545,9 +545,10 @@ if __name__ == "__main__":
                     "Ki":        Ki,
                     "Kd":        Kd,
                     "Kff":       Kff,
+                    "actual_elapsed_time_per_loop": actual_elapsed_time,
                 })
-                # if BMS_socMin <= SOC_Stop:
-                #     break
+                if BMS_socMin <= SOC_Stop:
+                    break
 
         except KeyboardInterrupt:
             print("\n[Main] KeyboardInterrupt detected. Exiting…")
@@ -563,7 +564,7 @@ if __name__ == "__main__":
                 datetime = datetime.now()
                 df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
                 timestamp_str = datetime.strftime("%H%M_%m%d")
-                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{algorithm_name}.xlsx"
+                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{algorithm_name}_Ts_{Ts}.xlsx"
                 log_dir = os.path.join(base_folder, "Log_DriveRobot")
                 os.makedirs(log_dir, exist_ok=True)     
                 excel_path = os.path.join(log_dir, excel_filename)

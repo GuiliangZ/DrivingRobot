@@ -166,18 +166,42 @@ if __name__ == "__main__":
     FeedFwdTime = 0.65                                  # feedforward reference speed time
     T_f = 5000.0                                        # Derivative filter coefficient. Formula uses: D_f[k] = D_f[k-1] + (T_s / (T_s + T_f)) * (D_k - D_f[k-1])
 
-    
-    Ts = 0.01                                           # 100 Hz main control loop updating rate - Sampling time 
+    Ts = 0.1                                           # 100 Hz main control loop updating rate - Sampling time 
                 # (if the actual loop time is larger than this Ts, the loop will updated at the actual computation time. 
                 # It will only be at this control frequency when the loop is fast enough to finish computation under this time)
     
-    # ─── DeePC Acados SETUP ──────────────────────────────────────────────────────
-    # DeePC paramters    
+    # DeePC paramters  
+    u_dim       = 1                                   # the dimension of control inputs - DR case: 1 - PWM input
+    y_dim       = 1                                   # the dimension of controlled outputs - DR case: 1 -Dyno speed output
+    # s = 1                                           # How many steps before we solve again the DeePC problem - how many control input used per iteration
+    # DeePC related hyperparameters to tune
+    # recompile_solver = True                         # True to recompile the acados solver at change of following parameters. False to use the previously compiled solver
+    use_data_for_hankel_cached = False                  # when want to load new excel data for building hankel matrix
+    use_hankel_cached = False
+    # Flip those logic to reuse what has already compiled to save time
+    recompile_solver = False
+    # use_data_for_hankel_cached = True                   # True to reuse the .npz file build from excel sheet
+    # use_hankel_cached = True
+
+    Tini        = 10                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
+    THorizon    = 10                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+    hankel_subB_size = 40                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+    Q_val = 10                                        # the weighting matrix of controlled outputs y
+    R_val = 1                                         # the weighting matrix of control inputs u
+    lambda_g_val = 10                                 # the weighting matrix of norm of operator g
+    lambda_y_val = 10                                 # the weighting matrix of mismatch of controlled output y
+    lambda_u_val= 10                                  # the weighting matrix of mismatch of controlled output u
+    T           = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
+    g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
+
+    # ─── DeePC Acados SETUP ──────────────────────────────────────────────────────  
+    # init deepc tools
+    print("[Main] Initiate DeePC setup and compile procedure..")
     PROJECT_DIR = Path(__file__).resolve().parent 
     DATA_DIR   = PROJECT_DIR / "dataForHankle" / "smallDataSet"                 # Hankel matrix data loading location
     CACHE_FILE_Ori_DATA = os.path.join(DATA_DIR, "hankel_dataset.npz")          # Cache the previously saved SISO data
     CACHE_FILE_HANKEL_DATA = os.path.join(DATA_DIR, "hankel_matrix.npz")        # Cache the previously saved Hankel matrix
-    if os.path.isfile(CACHE_FILE_Ori_DATA):
+    if os.path.isfile(CACHE_FILE_Ori_DATA) and use_data_for_hankel_cached:
         print(f"[Main] Using cached input output data from {CACHE_FILE_Ori_DATA}")
         npz = np.load(CACHE_FILE_Ori_DATA, allow_pickle=True)
         ud, yd = npz['ud'], npz['yd']
@@ -186,27 +210,6 @@ if __name__ == "__main__":
         ud, yd = load_timeseries(DATA_DIR)          # history data collected offline to construct Hankel matrix; size (T, ud/yd)
         np.savez(CACHE_FILE_Ori_DATA, ud=ud, yd=yd)
         print(f"[Main] Finished loading data for hankel matrix, and saved to {CACHE_FILE_Ori_DATA}")
-
-    # init deepc tools
-    print("[Main] Initiate DeePC setup and compile procedure..")
-    u_dim       = 1                                   # the dimension of control inputs - DR case: 1 - PWM input
-    y_dim       = 1                                   # the dimension of controlled outputs - DR case: 1 -Dyno speed output
-    # s = 1                                           # How many steps before we solve again the DeePC problem - how many control input used per iteration
-    # DeePC related hyperparameters to tune
-    use_hankel_cached = False
-    recompile_solver = False
-    # use_hankel_cached = True
-    # recompile_solver = True                         # True to recompile the acados solver at change of following parameters. False to use the previously compiled solver
-    Tini        = 10                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-    THorizon    = 10                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-    hankel_subB_size = 49                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
-    Q_val = 10                                        # the weighting matrix of controlled outputs y
-    R_val = 1                                         # the weighting matrix of control inputs u
-    lambda_g_val = 10                                  # the weighting matrix of norm of operator g
-    lambda_y_val = 10                                  # the weighting matrix of mismatch of controlled output y
-    # lambda_u_val= 10                                # the weighting matrix of mismatch of controlled output u
-    T           = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
-    g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
 
     #DeePC_kickIn_time = 100                                                      # because we need to build hankel matrix around the current time point, should be half of the hankel_subB_size
     if os.path.isfile(CACHE_FILE_HANKEL_DATA) and use_hankel_cached:
@@ -226,15 +229,16 @@ if __name__ == "__main__":
     # Since the g_dim is too big, if use original deepctools, the matrix become untractable, need to use casadi representation to formulate the problem
     lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))                           # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
     lambda_y    = np.diag(np.tile(lambda_y_val, Tini))                            # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
-    # lambda_u    = np.diag(np.tile(lambda_u_val, Tini))                            # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
+    lambda_u  = np.diag(np.tile(lambda_u_val, Tini))                              # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
     Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
     R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
 
     # Added a constraint to regulated the rate of change of control input u
-    ineqconidx  = {'u': [0], 'y':[0], 'du':[0]}                                     # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
+    # ineqconidx  = {'u': [0], 'y':[0], 'du':[0]}                                   # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
+    ineqconidx  = {'u': [0], 'y':[0]}
     ineqconbd   ={'lbu': np.array([-15]), 'ubu': ([100]),                           # specify the bounds for u and y
-                    'lby': np.array([0]), 'uby': np.array([140]),
-                    'lbdu': np.array([-10]), 'ubdu': np.array([1.2])}               # lower and upper bound for change of control input - can find the approximate range from baseline data for 100 Hz             
+                    'lby': np.array([0]), 'uby': np.array([140])}
+                    # 'lbdu': np.array([-10]), 'ubdu': np.array([1.2])}             # lower and upper bound for change of control input - can find the approximate range from baseline data for 100 Hz             
 
     dpc_args = [u_dim, y_dim, T, Tini, THorizon]                                    # THorizon is Np in dpc class
     dpc_kwargs = dict(ineqconidx=ineqconidx, ineqconbd=ineqconbd)
@@ -404,13 +408,7 @@ if __name__ == "__main__":
                 if DeePC_control:
                     u_opt, g_opt, t_deepc, exist_feasible_sol = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
                                                                         Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q, R_val=R,
-                                                                        lambda_g_val=lambda_g, lambda_y_val=lambda_y, g_prev = g_prev)   
-                        # u_opt, g_opt, t_deepc = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
-                        #                                                 Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q_val, R_val=R_val,
-                        #                                                 lambda_g_val=lambda_g_val, lambda_y_val=lambda_y_val, g_prev = g_prev)   
-                        # u_opt, g_opt, t_deepc = dpc.solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For CasADi NLP solver - Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
-                        #                                         Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q_val, R_val=R_val,
-                        #                                          lambda_g_val=lambda_g_val, lambda_y_val=lambda_y_val)         
+                                                                        lambda_g_val=lambda_g, lambda_y_val=lambda_y, lambda_u_val=lambda_u, g_prev = g_prev)         
                     g_prev = g_opt      # hot start g_opt
                     if exist_feasible_sol:
                         u_unclamped = u_opt[0]
@@ -476,12 +474,13 @@ if __name__ == "__main__":
                 # ── 11) Schedule next tick at 100 Hz ───────────────────────────────
                 next_time += Ts
                 loop_count += 1
+                hankel_idx += 1
                 # Update hankel_idx: because this is not ROTS system, 
                 # there's lags, it's not running exactly Ts per loop, 
                 # make hankel index correspond to the first 4 digits of elapsed_time
                 s = f"{elapsed_time:.3f}"               # "20.799"
                 digits = s.replace(".", "")             # "20799"
-                hankel_idx = int(digits[:4])            # 2079
+                hankel_idx = int(digits[:3])            # 2079
                
                 # 12) Append this tick’s values to log_data
                 log_data.append({
@@ -490,12 +489,14 @@ if __name__ == "__main__":
                     "v_meas":    v_meas,
                     "u":         u,
                     "error":     e_k,
-                    "t_deepc":   t_deepc,
+                    "t_deepc(ms)":   t_deepc,
                     "BMS_socMin":BMS_socMin,
                     "SOC_CycleStarting":SOC_CycleStarting,
+                    "exist_feasible_sol":exist_feasible_sol,
+                    "actual_elapsed_time":actual_elapsed_time,
                 })
-                # if BMS_socMin <= SOC_Stop:
-                #     break
+                if BMS_socMin <= SOC_Stop:
+                    break
 
         except KeyboardInterrupt:
             print("\n[Main] KeyboardInterrupt detected. Exiting…")
@@ -511,7 +512,7 @@ if __name__ == "__main__":
                 datetime = datetime.now()
                 df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
                 timestamp_str = datetime.strftime("%H%M_%m%d")
-                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{algorithm_name}.xlsx"
+                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{algorithm_name}_Ts_{Ts}.xlsx"
                 log_dir = os.path.join(base_folder, "Log_DriveRobot")
                 os.makedirs(log_dir, exist_ok=True)     
                 excel_path = os.path.join(log_dir, excel_filename)

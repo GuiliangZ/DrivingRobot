@@ -1,0 +1,42 @@
+# Setup Kavser Leaf V2:
+	1. download the "socketcan_kvaser_drivers_1_20_867.tar.gz" from official website
+	!!! Never ever touch this folder:"Kvaser Linux Drivers and SDK" : 
+	2. In the socketcan_kvaser_drivers folder:!!! Don't ever touch this LinuxCAN folder, it will create virtual CAN which will make your Leaf can doesn't work!!!
+		sudo apt install build-essential linux-headers-$(uname -r) 
+		git clone https://github.com/kvaser/linuxcan socketcan_kvaser_drivers
+		cd kernel/drivers/net/can/usb/kvaser_usb
+		make -C /lib/modules/$(uname -r)/build M=$(pwd) modules
+		sudo mkdir -p /lib/modules/$(uname -r)/updates
+		sudo make -C /lib/modules/$(uname -r)/build M=$(pwd) \
+		     INSTALL_MOD_DIR=updates modules_install
+		sudo depmod -a
+		sudo modprobe kvaser_usb
+3. check if can0, can1, can2 appears, if it does, that's all you need for setup Kvaser leaf
+		ls /sys/class/net/ | grep can
+												
+	
+
+# setup cp2112 USB to I2C communication module:
+	sudo modprobe i2c-dev
+	i2cdetect -l	(i2c-5    unknown    CP2112 SMBus Bridge on hidraw1)
+	pip install smbus2
+	sudo usermod -aG i2c $USER
+
+# CAN setup
+sudo modprobe can       # core CAN support
+sudo modprobe can_raw   # raw-socket protocol
+sudo modprobe can_dev   # network interface “canX” support
+sudo modprobe kvaser_usb
+sudo ip link set can0 down                         # if it was already up
+sudo ip link set can0 type can bitrate 500000
+sudo ip link set can0 up
+sudo ip link set can1 down
+sudo ip link set can1 type can bitrate 500000
+sudo ip link set can1 up
+i2cdetect -l
+ls /sys/class/net/ | grep can
+
+# change to real-time linux kernel - linux 5.15.0-1087-realtime
+sudo nano /etc/default/grub
+# check kernel
+uname -r
