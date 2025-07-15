@@ -160,7 +160,7 @@ def veh_can_listener_thread(dbc_path: str, can_iface: str):
 # ─────────────────────────────── MAIN CONTROL ─────────────────────────────────
 if __name__ == "__main__":
     # System parameters
-    max_delta = 50.0                                    # maximum % change per 0.01 s(Ts) tick - regulate the rate of change of pwm output u
+    max_delta = 80.0                                    # maximum % change per 0.01 s(Ts) tick - regulate the rate of change of pwm output u
     SOC_CycleStarting = 0.0                             # Managing Vehicle SOC - record SOC at every starting point of the cycle
     SOC_Stop = 2.2                                      # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
     FeedFwdTime = 0.65                                  # feedforward reference speed time
@@ -175,24 +175,38 @@ if __name__ == "__main__":
     y_dim       = 1                                   # the dimension of controlled outputs - DR case: 1 -Dyno speed output
     # s = 1                                           # How many steps before we solve again the DeePC problem - how many control input used per iteration
     # DeePC related hyperparameters to tune
-    # recompile_solver = True                         # True to recompile the acados solver at change of following parameters. False to use the previously compiled solver
+    recompile_solver = False                         # True to recompile the acados solver at change of following parameters. False to use the previously compiled solver
     use_data_for_hankel_cached = False                  # when want to load new excel data for building hankel matrix
     use_hankel_cached = False
     # Flip those logic to reuse what has already compiled to save time
-    recompile_solver = False
+    # recompile_solver = True
     # use_data_for_hankel_cached = True                   # True to reuse the .npz file build from excel sheet
     # use_hankel_cached = True
 
-    Tini        = 10                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-    THorizon    = 10                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-    hankel_subB_size = 40                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
-    Q_val = 10                                        # the weighting matrix of controlled outputs y
-    R_val = 1                                         # the weighting matrix of control inputs u
-    lambda_g_val = 10                                 # the weighting matrix of norm of operator g
+    Tini        = 20                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
+    THorizon    = 20                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+    hankel_subB_size = 89                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+    Q_val = 200                                        # the weighting matrix of controlled outputs y
+    R_val = 0.3                                         # the weighting matrix of control inputs u
+    lambda_g_val = 60                                 # the weighting matrix of norm of operator g
     lambda_y_val = 10                                 # the weighting matrix of mismatch of controlled output y
     lambda_u_val= 10                                  # the weighting matrix of mismatch of controlled output u
     T           = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
     g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
+    
+    # Smaller values (e.g., 0.05) result in slower decay, while larger values (e.g., 0.2) focus more on the first few steps.
+    decay_rate_q = 0.1                                  # decay rate for Q weights
+    decay_rate_r = 0.1                                  # decay rate for R weights
+    # Define Q and R with exponential decay
+    q_weights = Q_val * np.exp(-decay_rate_q * np.arange(THorizon))
+    r_weights = R_val * np.exp(-decay_rate_r * np.arange(THorizon))
+    Q = np.diag(q_weights)                              # Shape (THorizon, THorizon)
+    R = np.diag(r_weights)                              # Shape (THorizon, THorizon)
+    # Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
+    # R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
+    lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))                           # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
+    lambda_y    = np.diag(np.tile(lambda_y_val, Tini))                            # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
+    lambda_u  = np.diag(np.tile(lambda_u_val, Tini))                              # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
 
     # ─── DeePC Acados SETUP ──────────────────────────────────────────────────────  
     # init deepc tools
@@ -226,17 +240,10 @@ if __name__ == "__main__":
         np.savez(CACHE_FILE_HANKEL_DATA, Up=Up, Uf=Uf, Yp=Yp, Yf=Yf)
         print(f"[Main] Finished making data for hankel matrix with shape Up{Up.shape}, Uf{Uf.shape}, Yp{Yp.shape}, Yf{Yf.shape}, and saved to {CACHE_FILE_HANKEL_DATA}")
 
-    # Since the g_dim is too big, if use original deepctools, the matrix become untractable, need to use casadi representation to formulate the problem
-    lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))                           # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
-    lambda_y    = np.diag(np.tile(lambda_y_val, Tini))                            # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
-    lambda_u  = np.diag(np.tile(lambda_u_val, Tini))                              # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
-    Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
-    R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
-
     # Added a constraint to regulated the rate of change of control input u
     # ineqconidx  = {'u': [0], 'y':[0], 'du':[0]}                                   # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
     ineqconidx  = {'u': [0], 'y':[0]}
-    ineqconbd   ={'lbu': np.array([-15]), 'ubu': ([100]),                           # specify the bounds for u and y
+    ineqconbd   ={'lbu': np.array([-30]), 'ubu': ([100]),                           # specify the bounds for u and y
                     'lby': np.array([0]), 'uby': np.array([140])}
                     # 'lbdu': np.array([-10]), 'ubdu': np.array([1.2])}             # lower and upper bound for change of control input - can find the approximate range from baseline data for 100 Hz             
 
@@ -259,7 +266,7 @@ if __name__ == "__main__":
     # dpc.init_RDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
     # dpc.init_FullRDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
     print("[Main] Finished compiling DeePC problem, starting the nominal system setup procedure!")
-
+    
     # ─── PCA9685 PWM SETUP ──────────────────────────────────────────────────────
     bus = SMBus(CP2112_BUS)
 
@@ -329,6 +336,7 @@ if __name__ == "__main__":
         g_prev         = None                                           # Record DeePC decision matrix g for solver hot start   
         prev_ref_speed = None                                           # Track previous reference speed 
         exist_feasible_sol = False
+        PID_control_activate = True
         u_history      = deque([0.0]*Tini,maxlen=Tini)                  # Record the history of control input for DeePC generating u_ini
         spd_history    = deque([0.0]*Tini,maxlen=Tini)                  # Record the history of control input for DeePC generating y_ini
         u_init = np.array(u_history).reshape(-1, 1)                     # shape (u_dim*Tini,1)
@@ -379,10 +387,6 @@ if __name__ == "__main__":
                     t_future = t_future[valid_mask]             
                 ref_horizon_speed = np.interp(t_future, ref_time, ref_speed)
                 ref_horizon_speed = ref_horizon_speed.reshape(-1, 1)
-                # print(
-                #     f"The ref_horizon_speed for DeePC with shape{ref_horizon_speed.shape} is: {ref_horizon_speed.flatten().ravel()}"
-                #     f"The uini for DeePC with shape{u_init.shape} is {u_init.flatten().ravel()}"
-                #     f"The yini for DeePC with shape{y_init.shape} is {y_init.flatten().ravel()}")
                 
                 # ── Compute current error e[k] and future error e_fut[k] ────────
                 v_meas = latest_speed if latest_speed is not None else 0.0
@@ -393,40 +397,43 @@ if __name__ == "__main__":
                 # if hankel_idx == DeePC_kickIn_time (initial time where DeePC kicks in): # At start: can build a local hankel matrix now, start to use DeePC
                 # if hankel_idx+THorizon >= DeePC_stop_time  # At the end, hankel matrix exceed the full length of reference data
                 Up_cur, Uf_cur, Yp_cur, Yf_cur = hankel_subBlocks(Up, Uf, Yp, Yf, Tini, THorizon, hankel_subB_size, hankel_idx)
+                # For Debug Purpose
                 # print(
-                    # f"Up_cur shape{Up_cur.shape} value: {Up_cur}, "
-                    #   f"Uf_cur shape{Uf_cur.shape} value: {Uf_cur}, "
-                    #   f"Yp_cur shape{Yp_cur.shape} value: {Yp_cur}, "
-                    #   f"Yf_cur shape{Uf_cur.shape} value: {Uf_cur}, "
-                    #   f"hankel_idx {hankel_idx}")
+                #     f"The ref_horizon_speed for DeePC with shape{ref_horizon_speed.shape} is: {ref_horizon_speed.flatten().ravel()}"
+                #     f"The uini for DeePC with shape{u_init.shape} is {u_init.flatten().ravel()}"
+                #     f"The yini for DeePC with shape{y_init.shape} is {y_init.flatten().ravel()}")
+                # print(
+                #     f"Up_cur shape{Up_cur.shape} value: {Up_cur}, "
+                #       f"Uf_cur shape{Uf_cur.shape} value: {Uf_cur}, "
+                #       f"Yp_cur shape{Yp_cur.shape} value: {Yp_cur}, "
+                #       f"Yf_cur shape{Uf_cur.shape} value: {Uf_cur}, "
+                #       f"hankel_idx {hankel_idx}")
                 
                  # ── Implement DeePC control only when hankel matrix, Tini, Uini are not none  ────────
                 # check that none of the required arrays contain a zero
-                arrays_to_check = [Up_cur, Uf_cur, Yp_cur, Yf_cur, u_init, y_init]
+                arrays_to_check = [Up_cur, Uf_cur, Yp_cur, Yf_cur, u_init, y_init, ref_horizon_speed]
                 DeePC_control = all(np.all(arr != 0) for arr in arrays_to_check)
-
-                if DeePC_control:
-                    u_opt, g_opt, t_deepc, exist_feasible_sol = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
-                                                                        Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q, R_val=R,
-                                                                        lambda_g_val=lambda_g, lambda_y_val=lambda_y, lambda_u_val=lambda_u, g_prev = g_prev)         
-                    g_prev = g_opt      # hot start g_opt
-                    if exist_feasible_sol:
+                u_opt, g_opt, t_deepc, exist_feasible_sol = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
+                                                                    Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q, R_val=R,
+                                                                    lambda_g_val=lambda_g, lambda_y_val=lambda_y, lambda_u_val=lambda_u, g_prev = g_prev)     
+                g_prev = g_opt
+                # if v_meas == 0.0:
+                #     g_prev = None
+                # else:
+                #     g_prev = g_opt      # hot start g_opt
+                if DeePC_control and exist_feasible_sol:
                         u_unclamped = u_opt[0]
-                    else:
-                        # jump to the else logic below using PID controller
-                        u_PID, P_term, I_out, D_term, e_k_mph = compute_pid_control( elapsed_time, FeedFwdTime,
-                                                                            ref_time, ref_speed, v_meas, e_k, prev_error,
-                                                                            I_state, D_f_state,Ts, T_f)
-                        u_unclamped = u_PID
+                        PID_control_activate = False
                 else:
                 # --------- default PID controller when DeePC is not available --------------------------
                     u_PID, P_term, I_out, D_term, e_k_mph = compute_pid_control( elapsed_time, FeedFwdTime,
                                                                         ref_time, ref_speed, v_meas, e_k, prev_error,
                                                                         I_state, D_f_state,Ts, T_f)
                     u_unclamped = u_PID
+                    PID_control_activate = True
 
                 # ──  Add a vehicle speed limiter safety feature (Theoretically don't need this part because all the control contraints are baked in the DeePC formulation) ────────
-                u = float(np.clip(u_unclamped, -15.0, +100.0))          # Total output u[k], clipped to [-15, +100]
+                u = float(np.clip(u_unclamped, -30.0, +100.0))          # Total output u[k], clipped to [-15, +100]
                 lower_bound = u_prev - max_delta
                 upper_bound = u_prev + max_delta                        # Allow u to move by at most ±max_delta from the previous cycle:
                 u = float(np.clip(u, lower_bound, upper_bound))         # Rate‐of‐change limiting on u
@@ -451,14 +458,29 @@ if __name__ == "__main__":
                     f"v_meas={v_meas:6.2f}kph, e={e_k:+6.2f}kph, "
                     f"u={u:6.2f}%, "
                     f"F_dyno={F_meas:6.2f} N, "
-                    # f"BMS_socMin={BMS_socMin:6.2f} %,"
+                    f"BMS_socMin={BMS_socMin:6.2f} %,"
                     f"SOC_CycleStarting AT={SOC_CycleStarting:6.2f} %, "
                     f"DeePC exist_feasible_sol={exist_feasible_sol}, "
+                    F"DeePC_control={DeePC_control}, "
+                    f"PID_control_activate={PID_control_activate}, "
                     f"t_deepc={t_deepc:6.3f} ms, "
                     f"actual_elapsed_time_per_loop={actual_elapsed_time:6.3f} ms, "
                     f"actual_control_frequency={actual_control_frequency:6.3f} Hz"
+                    f"hankel_idx={hankel_idx:6.3f}"
                 )
 
+                # Debug purpose
+                # print(
+                #     "vref:", ref_horizon_speed,
+                #     "u_init:", u_init,
+                #     "y_init:", y_init,
+                #     "Up_cur:", Up_cur,
+                #     "Uf_cur:", Uf_cur,
+                #     "Yp_cur:", Yp_cur,
+                #     "Yf_cur:", Yf_cur,
+                #     "g_opt:", g_opt,
+                #     "u_opt:", u_opt
+                # )
                 # print(f"loop_count: {loop_count}")
 
                 # ── 10) Save state for next iteration ──────────────────────────────
@@ -478,9 +500,9 @@ if __name__ == "__main__":
                 # Update hankel_idx: because this is not ROTS system, 
                 # there's lags, it's not running exactly Ts per loop, 
                 # make hankel index correspond to the first 4 digits of elapsed_time
-                s = f"{elapsed_time:.3f}"               # "20.799"
-                digits = s.replace(".", "")             # "20799"
-                hankel_idx = int(digits[:3])            # 2079
+                # s = f"{elapsed_time:.3f}"               # "20.799"
+                # digits = s.replace(".", "")             # "20799"
+                # hankel_idx = int(digits[:3])            # 2079
                
                 # 12) Append this tick’s values to log_data
                 log_data.append({
@@ -493,7 +515,19 @@ if __name__ == "__main__":
                     "BMS_socMin":BMS_socMin,
                     "SOC_CycleStarting":SOC_CycleStarting,
                     "exist_feasible_sol":exist_feasible_sol,
+                    "DeePC_control": DeePC_control,
+                    "PID_control_activate":PID_control_activate,
                     "actual_elapsed_time":actual_elapsed_time,
+                    "hankel_idx":hankel_idx,
+                    "vref":ref_horizon_speed,
+                    "u_init": u_init,
+                    "y_init": y_init,
+                    "Up_cur": Up_cur,
+                    "Uf_cur": Uf_cur,
+                    "Yp_cur": Yp_cur,
+                    "Yf_cur": Yf_cur,
+                    "g_opt" : g_opt,
+                    "u_opt" : u_opt,
                 })
                 if BMS_socMin <= SOC_Stop:
                     break
@@ -512,7 +546,7 @@ if __name__ == "__main__":
                 datetime = datetime.now()
                 df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
                 timestamp_str = datetime.strftime("%H%M_%m%d")
-                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{algorithm_name}_Ts_{Ts}.xlsx"
+                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_Start{SOC_CycleStarting}%_{algorithm_name}_Ts{Ts}_Q{Q_val}_R{R_val}_decayQ{decay_rate_q}_decayR{decay_rate_r}_Tini{Tini}_gDim{g_dim}_λg{lambda_g_val}_λu{lambda_u_val}__λy{lambda_y_val}.xlsx"
                 log_dir = os.path.join(base_folder, "Log_DriveRobot")
                 os.makedirs(log_dir, exist_ok=True)     
                 excel_path = os.path.join(log_dir, excel_filename)

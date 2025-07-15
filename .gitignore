@@ -8,3 +8,4 @@ deepc/dataForHankle/hankel_dataset.npz
 deepc/dataForHankle/smallDataSet/hankel_matrix.npz
 
 >>>>>>> 9147756 (integrated PID controller and DeePC controller so that it runs nominal baseline PID controller if DeePC controller solution is not feasiable)
+*.json

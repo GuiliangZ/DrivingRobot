@@ -556,16 +556,36 @@ void deepc_acados_setup_nlp_in(deepc_solver_capsule* capsule, const int N, doubl
     double* luh = calloc(2*NH, sizeof(double));
     double* lh = luh;
     double* uh = luh + NH;
-    lh[0] = -15;
-    lh[1] = -15;
-    lh[2] = -15;
-    lh[3] = -15;
-    lh[4] = -15;
-    lh[5] = -15;
-    lh[6] = -15;
-    lh[7] = -15;
-    lh[8] = -15;
-    lh[9] = -15;
+    lh[0] = -30;
+    lh[1] = -30;
+    lh[2] = -30;
+    lh[3] = -30;
+    lh[4] = -30;
+    lh[5] = -30;
+    lh[6] = -30;
+    lh[7] = -30;
+    lh[8] = -30;
+    lh[9] = -30;
+    lh[10] = -30;
+    lh[11] = -30;
+    lh[12] = -30;
+    lh[13] = -30;
+    lh[14] = -30;
+    lh[15] = -30;
+    lh[16] = -30;
+    lh[17] = -30;
+    lh[18] = -30;
+    lh[19] = -30;
+    lh[20] = -30;
+    lh[21] = -30;
+    lh[22] = -30;
+    lh[23] = -30;
+    lh[24] = -30;
+    lh[25] = -30;
+    lh[26] = -30;
+    lh[27] = -30;
+    lh[28] = -30;
+    lh[29] = -30;
     uh[0] = 100;
     uh[1] = 100;
     uh[2] = 100;
@@ -576,16 +596,56 @@ void deepc_acados_setup_nlp_in(deepc_solver_capsule* capsule, const int N, doubl
     uh[7] = 100;
     uh[8] = 100;
     uh[9] = 100;
-    uh[10] = 140;
-    uh[11] = 140;
-    uh[12] = 140;
-    uh[13] = 140;
-    uh[14] = 140;
-    uh[15] = 140;
-    uh[16] = 140;
-    uh[17] = 140;
-    uh[18] = 140;
-    uh[19] = 140;
+    uh[10] = 100;
+    uh[11] = 100;
+    uh[12] = 100;
+    uh[13] = 100;
+    uh[14] = 100;
+    uh[15] = 100;
+    uh[16] = 100;
+    uh[17] = 100;
+    uh[18] = 100;
+    uh[19] = 100;
+    uh[20] = 100;
+    uh[21] = 100;
+    uh[22] = 100;
+    uh[23] = 100;
+    uh[24] = 100;
+    uh[25] = 100;
+    uh[26] = 100;
+    uh[27] = 100;
+    uh[28] = 100;
+    uh[29] = 100;
+    uh[30] = 140;
+    uh[31] = 140;
+    uh[32] = 140;
+    uh[33] = 140;
+    uh[34] = 140;
+    uh[35] = 140;
+    uh[36] = 140;
+    uh[37] = 140;
+    uh[38] = 140;
+    uh[39] = 140;
+    uh[40] = 140;
+    uh[41] = 140;
+    uh[42] = 140;
+    uh[43] = 140;
+    uh[44] = 140;
+    uh[45] = 140;
+    uh[46] = 140;
+    uh[47] = 140;
+    uh[48] = 140;
+    uh[49] = 140;
+    uh[50] = 140;
+    uh[51] = 140;
+    uh[52] = 140;
+    uh[53] = 140;
+    uh[54] = 140;
+    uh[55] = 140;
+    uh[56] = 140;
+    uh[57] = 140;
+    uh[58] = 140;
+    uh[59] = 140;
 
     for (int i = 1; i < N; i++)
     {
@@ -667,7 +727,7 @@ static void deepc_acados_create_set_opts(deepc_solver_capsule* capsule)
     int globalization_full_step_dual = 0;
     ocp_nlp_solver_opts_set(nlp_config, capsule->nlp_opts, "globalization_full_step_dual", &globalization_full_step_dual);
 
-    double levenberg_marquardt = 0.000001;
+    double levenberg_marquardt = 0.0001;
     ocp_nlp_solver_opts_set(nlp_config, nlp_opts, "levenberg_marquardt", &levenberg_marquardt);
 
     /* options QP solver */
@@ -868,7 +928,7 @@ int deepc_acados_update_params(deepc_solver_capsule* capsule, int stage, double 
 {
     int solver_status = 0;
 
-    int casadi_np = 1711;
+    int casadi_np = 14731;
     if (casadi_np != np) {
         printf("acados_update_params: trying to set %i parameters for external functions."
             " External function has %i parameters. Exiting.\n", np, casadi_np);

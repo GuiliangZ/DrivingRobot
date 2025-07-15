@@ -275,7 +275,7 @@ class deepctools():
         ocp.solver_options.hessian_approx       = 'EXACT'                    # 'GAUSS_NEWTON' for "LINEAR_LS" cost_type
         ocp.solver_options.integrator_type      = 'DISCRETE'                 # Using purely hankel-based styatic DeePC, best choice-'DISCRETE'. actual dynamic in OCP: 'ERK'-classic Runge-Kutta 4. Options: 'IRK', 'GNSF', 'LIFTED_IRK', 'DISCRETE
         ocp.solver_options.nlp_solver_type      = 'SQP_RTI'                  # Need g_opt warm start! Real‐Time Iteration SQP: performs exactly one SQP step per control cycle. Ultra‐low latency, but may require more frequent warm starts or robustification
-        ocp.solver_options.levenberg_marquardt = 1e-6
+        ocp.solver_options.levenberg_marquardt = 1e-4
         ocp.solver_options.tf                   = 1.0                        # For s discrete dynamics, static QP in g, tf is unused - can leave it at the default(1.0)
         ocp.solver_options.qp_solver_warm_start = 1                         # Enable primal-dual warm-starting for faster subsequent solves.
         ocp.solver_options.print_level = 0                                  # Minimize output for real-time speed; set to 1-2 for debugging.

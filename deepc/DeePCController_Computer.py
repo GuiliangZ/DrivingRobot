@@ -165,7 +165,7 @@ if __name__ == "__main__":
     SOC_Stop = 2.2                                      # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
 
     
-    Ts = 0.01                                           # 100 Hz main control loop updating rate - Sampling time 
+    Ts = 0.1                                           # 100 Hz main control loop updating rate - Sampling time 
                 # (if the actual loop time is larger than this Ts, the loop will updated at the actual computation time. 
                 # It will only be at this control frequency when the loop is fast enough to finish computation under this time)
     
@@ -196,21 +196,35 @@ if __name__ == "__main__":
     use_hankel_cached = False
     # Flip those logic to reuse what has already compiled to save time
     recompile_solver = False
-    use_data_for_hankel_cached = True                  # True to reuse the .npz file build from excel sheet
-    use_hankel_cached = True
+    # use_data_for_hankel_cached = True                  # True to reuse the .npz file build from excel sheet
+    # use_hankel_cached = True
     # Tini        = 30                                 # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
     # THorizon    = 30                                 # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
     # hankel_subB_size = 129                           # hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
-    Tini        = 40                                   # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-    THorizon    = 40                                   # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-    hankel_subB_size = 160 
-    Q_val = 10                                         # the weighting matrix of controlled outputs y
+    Tini        = 10                                   # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
+    THorizon    = 10                                   # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+    hankel_subB_size = 40 
+    Q_val = 1000                                         # the weighting matrix of controlled outputs y
     R_val = 1                                          # the weighting matrix of control inputs u
-    lambda_g_val = 10                                  # the weighting matrix of norm of operator g
+    lambda_g_val = 50                                  # the weighting matrix of norm of operator g
     lambda_y_val = 10                                  # the weighting matrix of mismatch of controlled output y
     lambda_u_val = 10                                  # the weighting matrix of mismatch of controlled output u
     T            = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
     g_dim        = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
+
+    # Smaller values (e.g., 0.05) result in slower decay, while larger values (e.g., 0.2) focus more on the first few steps.
+    decay_rate_q = 0.1                                  # decay rate for Q weights
+    decay_rate_r = 0.1                                  # decay rate for R weights
+    # Define Q and R with exponential decay
+    q_weights = Q_val * np.exp(-decay_rate_q * np.arange(THorizon))
+    r_weights = R_val * np.exp(-decay_rate_r * np.arange(THorizon))
+    Q = np.diag(q_weights)                              # Shape (THorizon, THorizon)
+    R = np.diag(r_weights)                              # Shape (THorizon, THorizon)
+    # Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
+    # R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
+    lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))                           # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
+    lambda_y    = np.diag(np.tile(lambda_y_val, Tini))                            # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
+    lambda_u  = np.diag(np.tile(lambda_u_val, Tini))                              # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
 
     #DeePC_kickIn_time = 100                          # because we need to build hankel matrix around the current time point, should be half of the hankel_subB_size
     if os.path.isfile(CACHE_FILE_HANKEL_DATA) and use_hankel_cached:
@@ -227,18 +241,20 @@ if __name__ == "__main__":
         np.savez(CACHE_FILE_HANKEL_DATA, Up=Up, Uf=Uf, Yp=Yp, Yf=Yf)
         print(f"[Main] Finished making data for hankel matrix with shape Up{Up.shape}, Uf{Uf.shape}, Yp{Yp.shape}, Yf{Yf.shape}, and saved to {CACHE_FILE_HANKEL_DATA}")
 
-    # Since the g_dim is too big, if use original deepctools, the matrix become untractable, need to use casadi representation to formulate the problem
-    lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))                           # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
-    lambda_y    = np.diag(np.tile(lambda_y_val, Tini))                            # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
-    lambda_u    = np.diag(np.tile(lambda_u_val, Tini))                            # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
-    Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
-    R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
-
     # Added a constraint to regulated the rate of change of control input u
     ineqconidx  = {'u': [0], 'y':[0], 'du':[0]}                                     # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
     ineqconbd   ={'lbu': np.array([-15]), 'ubu': ([100]),                           # specify the bounds for u and y
                     'lby': np.array([0]), 'uby': np.array([140]),
                     'lbdu': np.array([-10]), 'ubdu': np.array([1.2])}               # lower and upper bound for change of control input - can find the approximate range from baseline data for 100 Hz             
+    # ineqconidx = {'u': list(range(u_dim)), 'y': list(range(y_dim))}
+    # ineqconbd = {
+    #     'lbu': np.tile([-30], Tini),  # Apply -30 to all u steps
+    #     'ubu': np.tile([100], Tini),  # Apply 100 to all u steps
+    #     'lby': np.tile([0], Tini),    # Apply 0 to all y steps
+    #     'uby': np.tile([140], Tini),  # Apply 140 to all y steps
+    #     # 'lbdu': np.tile([-10], Tini), # Add Delta u constraints
+    #     # 'ubdu': np.tile([10], Tini)   # Add Delta u constraints
+    # }
 
     dpc_args = [u_dim, y_dim, T, Tini, THorizon]                                    # THorizon is Np in dpc class
     dpc_kwargs = dict(ineqconidx=ineqconidx, ineqconbd=ineqconbd)
@@ -487,7 +503,7 @@ if __name__ == "__main__":
                 datetime = datetime.now()
                 df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
                 timestamp_str = datetime.strftime("%H%M_%m%d")
-                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{algorithm_name}.xlsx"
+                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_Start{SOC_CycleStarting}%_{algorithm_name}_Ts{Ts}_Q{Q_val}_R{R_val}_Tini{Tini}_gDim{g_dim}_λg{lambda_g_val}_λu{lambda_u_val}__λy{lambda_y_val}.xlsx"
                 log_dir = os.path.join(base_folder, "Log_DriveRobot")
                 os.makedirs(log_dir, exist_ok=True)     
                 excel_path = os.path.join(log_dir, excel_filename)

@@ -36,10 +36,10 @@
 #include "acados_c/ocp_nlp_interface.h"
 #include "acados_c/external_function_interface.h"
 
-#define DEEPC_NX     21
+#define DEEPC_NX     61
 #define DEEPC_NZ     0
 #define DEEPC_NU     0
-#define DEEPC_NP     1711
+#define DEEPC_NP     14731
 #define DEEPC_NP_GLOBAL     0
 #define DEEPC_NBX    0
 #define DEEPC_NBX0   0
@@ -65,7 +65,7 @@
 #define DEEPC_NY     0
 #define DEEPC_NYN    0
 #define DEEPC_N      1
-#define DEEPC_NH     20
+#define DEEPC_NH     60
 #define DEEPC_NHN    0
 #define DEEPC_NH0    0
 #define DEEPC_NPHI0  0

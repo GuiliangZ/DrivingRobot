@@ -49,11 +49,11 @@ extern "C" {
   #endif
 #endif
 
-static const casadi_int casadi_s0[3] = {30, 1, 1};
+static const casadi_int casadi_s0[3] = {41, 1, 1};
 static const casadi_int casadi_s1[3] = {0, 1, 1};
-static const casadi_int casadi_s2[3] = {2430, 1, 1};
+static const casadi_int casadi_s2[3] = {6621, 1, 1};
 
-/* deepc_dyn_disc_phi_fun:(i0[30],i1[0],i2[2430])->(o0[30]) */
+/* deepc_dyn_disc_phi_fun:(i0[41],i1[0],i2[6621])->(o0[41]) */
 static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem) {
   casadi_real a0;
   a0=arg[0]? arg[0][0] : 0;
@@ -116,6 +116,28 @@ static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw,
   if (res[0]!=0) res[0][28]=a0;
   a0=arg[0]? arg[0][29] : 0;
   if (res[0]!=0) res[0][29]=a0;
+  a0=arg[0]? arg[0][30] : 0;
+  if (res[0]!=0) res[0][30]=a0;
+  a0=arg[0]? arg[0][31] : 0;
+  if (res[0]!=0) res[0][31]=a0;
+  a0=arg[0]? arg[0][32] : 0;
+  if (res[0]!=0) res[0][32]=a0;
+  a0=arg[0]? arg[0][33] : 0;
+  if (res[0]!=0) res[0][33]=a0;
+  a0=arg[0]? arg[0][34] : 0;
+  if (res[0]!=0) res[0][34]=a0;
+  a0=arg[0]? arg[0][35] : 0;
+  if (res[0]!=0) res[0][35]=a0;
+  a0=arg[0]? arg[0][36] : 0;
+  if (res[0]!=0) res[0][36]=a0;
+  a0=arg[0]? arg[0][37] : 0;
+  if (res[0]!=0) res[0][37]=a0;
+  a0=arg[0]? arg[0][38] : 0;
+  if (res[0]!=0) res[0][38]=a0;
+  a0=arg[0]? arg[0][39] : 0;
+  if (res[0]!=0) res[0][39]=a0;
+  a0=arg[0]? arg[0][40] : 0;
+  if (res[0]!=0) res[0][40]=a0;
   return 0;
 }
 

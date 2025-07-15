@@ -51,33 +51,24 @@ def load_timeseries(data_dir):
 # System parameters
 algorithm_name = "deepc_toy_example"
 Ts = 0.1                                           # 100 Hz main control loop updating rate - Sampling time 
-Tini        = 10                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-THorizon    = 10                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-hankel_subB_size = 40                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
-# Tini        = 40                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-# THorizon    = 40                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-# hankel_subB_size = 160                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+Tini        = 30                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
+THorizon    = 30                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+hankel_subB_size = 120                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+# Tini        = 20                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
+# THorizon    = 20                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+# hankel_subB_size = 89                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
 
-Q_val = 10                                        # the weighting matrix of controlled outputs y
+Q_val = 100                                       # the weighting matrix of controlled outputs y
 R_val = 1                                         # the weighting matrix of control inputs u
-lambda_g_val = 10                                 # the weighting matrix of norm of operator g
+lambda_g_val = 50                                 # the weighting matrix of norm of operator g
 lambda_y_val = 10                                 # the weighting matrix of mismatch of controlled output y
-lambda_u_val= 10                                # the weighting matrix of mismatch of controlled output u
+lambda_u_val= 10                                  # the weighting matrix of mismatch of controlled output u
 T           = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
 g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
 u_dim       = 1                                   # the dimension of control inputs - DR case: 1 - PWM input
 y_dim       = 1                                   # the dimension of controlled outputs - DR case: 1 -Dyno speed output
 
-
-PROJECT_DIR = Path().resolve()
-DATA_DIR   = PROJECT_DIR / "dataForHankle" / "smallDataSet"                 # Hankel matrix data loading location
-CACHE_FILE_Ori_DATA = os.path.join(DATA_DIR, "hankel_dataset.npz")          # Cache the previously saved SISO data
-CACHE_FILE_HANKEL_DATA = os.path.join(DATA_DIR, "hankel_matrix.npz")        # Cache the previously saved Hankel matrix
-DATA_DIR_Sim   = PROJECT_DIR / "dataForHankle" / "SimulateDR"                 # Hankel matrix data loading location
-CACHE_FILE_Ori_DATA_Sim = os.path.join(DATA_DIR, "hankel_dataset_simulate.npz")          # Cache the previously saved SISO data
-CACHE_FILE_HANKEL_DATA_Sim = os.path.join(DATA_DIR, "hankel_matrix_simulate.npz")  
-
-recompile_solver = True                         # True to recompile the acados solver at change of following parameters. False to use the previously compiled solver
+recompile_solver = True                           # True to recompile the acados solver at change of following parameters. False to use the previously compiled solver
 use_data_for_hankel_cached = False                  # when want to load new excel data for building hankel matrix
 use_hankel_cached = False
 use_data_for_hankel_cached_sim = False                   # True to reuse the .npz file build from excel sheet
@@ -90,15 +81,16 @@ use_hankel_cached_sim = False
 # use_data_for_hankel_cached_sim = True                   # True to reuse the .npz file build from excel sheet
 # use_hankel_cached_sim = True
 
-# ─── DeePC Acados SETUP ──────────────────────────────────────────────────────  
 print("[Main] Initiate DeePC setup and compile procedure..")
 PROJECT_DIR = Path().resolve()
+# PROJECT_DIR = Path(__file__).resolve().parent 
 DATA_DIR   = PROJECT_DIR / "dataForHankle" / "smallDataSet"                 # Hankel matrix data loading location
 CACHE_FILE_Ori_DATA = os.path.join(DATA_DIR, "hankel_dataset.npz")          # Cache the previously saved SISO data
 CACHE_FILE_HANKEL_DATA = os.path.join(DATA_DIR, "hankel_matrix.npz")        # Cache the previously saved Hankel matrix
 DATA_DIR_Sim   = PROJECT_DIR / "dataForHankle" / "SimulateDR"                 # Hankel matrix data loading location
 CACHE_FILE_Ori_DATA_Sim = os.path.join(DATA_DIR_Sim, "hankel_dataset_simulate.npz")          # Cache the previously saved SISO data
 CACHE_FILE_HANKEL_DATA_Sim = os.path.join(DATA_DIR_Sim, "hankel_matrix_simulate.npz")        # Cache the previously saved Hankel matrix
+print(DATA_DIR)
 
 if os.path.isfile(CACHE_FILE_Ori_DATA) and use_data_for_hankel_cached:
     print(f"[Main] Using cached input output data from {CACHE_FILE_Ori_DATA}")
@@ -151,6 +143,7 @@ print(f"[Main] Finished making data for hankel matrix with shape Up_sim{Up_sim.s
 # print(f"vref:{vref}")
 # ─── System Setup ────────────────────────────────────────────────
 base_folder = "../"
+# base_folder = ""
 all_cycles = load_drivecycle_mat_files(base_folder) # Load reference cycle from .mat(s)
 cycle_key = 8                     # 8 for WLTP cycle
 veh_modelName = 3
@@ -198,9 +191,18 @@ R           = np.diag(np.tile(R_val, THorizon))                               # 
 # Added a constraint to regulated the rate of change of control input u
 ineqconidx  = {'u': [0], 'y':[0], 'du':[0]}                                     # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
 ineqconidx  = {'u': [0], 'y':[0]} 
-ineqconbd   ={'lbu': np.array([-15]), 'ubu': ([100]),                           # specify the bounds for u and y
+ineqconbd   ={'lbu': np.array([-30]), 'ubu': ([100]),                           # specify the bounds for u and y
                 'lby': np.array([0]), 'uby': np.array([140])}
                 # 'lbdu': np.array([-10]), 'ubdu': np.array([1.2])}               # lower and upper bound for change of control input - can find the approximate range from baseline data for 100 Hz             
+# ineqconidx = {'u': list(range(u_dim)), 'y': list(range(y_dim))}
+# ineqconbd = {
+#     'lbu': np.tile([-30], Tini),  # Apply -30 to all u steps
+#     'ubu': np.tile([100], Tini),  # Apply 100 to all u steps
+#     'lby': np.tile([0], Tini),    # Apply 0 to all y steps
+#     'uby': np.tile([140], Tini),  # Apply 140 to all y steps
+#     # 'lbdu': np.tile([-10], Tini), # Add Delta u constraints
+#     # 'ubdu': np.tile([10], Tini)   # Add Delta u constraints
+# }
 
 dpc_args = [u_dim, y_dim, T, Tini, THorizon]                                    # THorizon is Np in dpc class
 dpc_kwargs = dict(ineqconidx=ineqconidx, ineqconbd=ineqconbd)
@@ -208,14 +210,14 @@ dpc = dpcAcados.deepctools(*dpc_args, **dpc_kwargs)
 
 # init and formulate deepc solver
 dpc.init_DeePCAcadosSolver(recompile_solver=recompile_solver, ineqconidx=ineqconidx, ineqconbd=ineqconbd) # Use acados solver
-dpc_opts = {                            # cs.nlpsol solver parameters - not used in acados
-    'ipopt.max_iter': 100,  # 50
-    'ipopt.tol': 1e-5,
-    'ipopt.print_level': 1,
-    'print_time': 0,
-    'ipopt.acceptable_tol': 1e-8,
-    'ipopt.acceptable_obj_change_tol': 1e-6,
-}
+# dpc_opts = {                            # cs.nlpsol solver parameters - not used in acados
+#     'ipopt.max_iter': 100,  # 50
+#     'ipopt.tol': 1e-5,
+#     'ipopt.print_level': 1,
+#     'print_time': 0,
+#     'ipopt.acceptable_tol': 1e-8,
+#     'ipopt.acceptable_obj_change_tol': 1e-6,
+# }
 # Specify what solver wanted to use - # Those solver are available as part of the deepctools, but may be slower than DeePCAcados for real time application
 # dpc.init_DeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)            
 # dpc.init_RDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
@@ -272,6 +274,7 @@ try:
             t_future = t_future[valid_mask]             
         ref_horizon_speed = np.interp(t_future, ref_time, ref_speed)
         ref_horizon_speed = ref_horizon_speed.reshape(-1, 1)
+        # Debug Purpose
         # print(
         #     f"The ref_horizon_speed for DeePC with shape{ref_horizon_speed.shape} is: {ref_horizon_speed.flatten().ravel()}"
         #     f"The uini for DeePC with shape{u_init.shape} is {u_init.flatten().ravel()}"
@@ -285,10 +288,11 @@ try:
 
         u_init = Up_cur_sim[:,0:1]
         y_init = Yp_cur_sim[:,0:1]
-        # print(f"u_init:{u_init}, \y_init:{y_init}")
-        # print(f"vref_sim shap: {vref_sim.shape}, hankel_idx:{hankel_idx}")
-        vref_cur = vref_sim[hankel_idx:hankel_idx+10,0:1]
+        vref_cur = vref_sim[hankel_idx:hankel_idx+THorizon,0:1]
         rspd_now = vref_cur[0,0]
+        # Debug purpose
+        # print(f"u_init:{u_init}, \y_init:{y_init}")
+        # print(f"vref_sim shap: {vref_sim.shape}, hankel_idx:{hankel_idx}")        
         # print(f"rspd_now: {rspd_now}, vref_cur:{vref_cur}")
         # print(
         #     f"Up_cur shape{Up_cur.shape} value: {Up_cur}, "
@@ -314,7 +318,9 @@ try:
             f"actual_elapsed_time_per_loop={actual_elapsed_time:6.3f} ms, "
             f"actual_control_frequency={actual_control_frequency:6.3f} Hz, "
             f"DeePC exist_feasible_sol={exist_feasible_sol}, "
-            f"hankel_idx={hankel_idx}"
+            f"hankel_idx={hankel_idx}",
+            f"g_opt= {g_opt}",
+            f"u_opt = {u_opt}",
         )
 
         # print(f"loop_count: {loop_count}")
@@ -350,7 +356,16 @@ try:
             # "SOC_CycleStarting":SOC_CycleStarting,
             "exist_feasible_sol":exist_feasible_sol,
             "actual_elapsed_time":actual_elapsed_time,
-            "hankel_idx": hankel_idx
+            "hankel_idx": hankel_idx,
+            "vref":ref_horizon_speed,
+            "u_init": u_init,
+            "y_init": y_init,
+            "Up_cur": Up_cur,
+            "Uf_cur": Uf_cur,
+            "Yp_cur": Yp_cur,
+            "Yf_cur": Yf_cur,
+            "g_opt" : g_opt,
+            "u_opt" : u_opt,
         })
         if elapsed_time >45:
             break
@@ -362,7 +377,7 @@ finally:
     datetime = datetime.now()
     df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
     timestamp_str = datetime.strftime("%H%M_%m%d")
-    excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{algorithm_name}_Ts_{Ts}.xlsx"
+    excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{algorithm_name}_Ts_{Ts}_Q_{Q_val}_R_{R_val}.xlsx"
     log_dir = os.path.join(base_folder, "deepc", "toy_example_Log_DriveRobot")
     os.makedirs(log_dir, exist_ok=True)     
     excel_path = os.path.join(log_dir, excel_filename)

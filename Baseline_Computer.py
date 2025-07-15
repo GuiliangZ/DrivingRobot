@@ -380,7 +380,7 @@ if __name__ == "__main__":
     SOC_CycleStarting = 0.0     # Managing Vehicle SOC
     SOC_Stop = 2.2              # Stop the test at SOC 2.2% so the vehicle doesn't go completely drained that it cannot restart/charge
 
-    Ts = 0.03                   # 100 Hz main control loop updating rate - Sampling time 
+    Ts = 0.0001                   # 100 Hz main control loop updating rate - Sampling time 
 
     for idx, cycle_key in enumerate(cycle_keys):
         # Stop the test if the vehicle SOC is too low to prevent draining the vehicle
@@ -487,7 +487,7 @@ if __name__ == "__main__":
 
                 # ── 7) Total output u[k], clipped to [-15, +100] ────────────────
                 u_unclamped = P_term + I_out + D_term + FF_term
-                u = float(np.clip(u_unclamped, -15.0, +100.0))
+                u = float(np.clip(u_unclamped, -30.0, +100.0))
 
                 # ── 8) Add a vehicle speed limiter safety feature ──────────────────────────────
                 lower_bound = u_prev - max_delta
@@ -564,7 +564,7 @@ if __name__ == "__main__":
                 datetime = datetime.now()
                 df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
                 timestamp_str = datetime.strftime("%H%M_%m%d")
-                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{SOC_CycleStarting}%Start_{algorithm_name}_Ts_{Ts}.xlsx"
+                excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_Start{SOC_CycleStarting}%_{algorithm_name}_Ts_{Ts}.xlsx"
                 log_dir = os.path.join(base_folder, "Log_DriveRobot")
                 os.makedirs(log_dir, exist_ok=True)     
                 excel_path = os.path.join(log_dir, excel_filename)
