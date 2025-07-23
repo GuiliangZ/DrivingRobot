@@ -71,6 +71,7 @@ import cantools
 import can
 
 from deepc.utils_deepc import *
+# from utils import *
 # ────────────────────────── GLOBALS FOR CAN THREAD ─────────────────────────────
 algorithm_name = "Baseline_PID_Comp"
 latest_speed = None           # Measured speed (kph) from CAN
@@ -82,7 +83,7 @@ BMS_socMin = None            # Measured current vehicle SOC from Vehicle CAN
 # veh_can_running  = False 
 
 # ——— CP2112 I²C setup ———
-CP2112_BUS   = 17         # e.g. /dev/i2c-3
+CP2112_BUS   = 3         # e.g. /dev/i2c-3
 PCA9685_ADDR = 0x40      # default PCA9685 address
 # PCA9685 register addresses
 MODE1_REG    = 0x00

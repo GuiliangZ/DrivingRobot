@@ -153,6 +153,8 @@ class deepctools():
                     dim = self.y_dim
                     lb = ineqconbd['lby']
                     ub = ineqconbd['uby']
+                elif varname == 'du':
+                    continue  # Handle 'du' separately in the caller, as it is affine
                 # elif varname == 'du':
                 #     # print(f'H_all is{H_all}')
                 #     dim = 1
@@ -171,7 +173,7 @@ class deepctools():
             Hc = cs.vertcat(*Hc_list)
             lbc = np.concatenate(lbc_list).flatten().tolist()
             ubc = np.concatenate(ubc_list).flatten().tolist()
-            ineq_flag = True
+            ineq_flag = True if Hc_list else False
         return Hc, lbc, ubc, ineq_flag
 
     @timer
@@ -201,8 +203,22 @@ class deepctools():
         D_du   = cs.jacobian(du, g)   # (Np*u_dim × g_dim)
 
         # To get constrains
-        Hc, lbc_ineq, ubc_ineq, ineq_flag = self._init_ineq_cons(ineqconidx, ineqconbd, Up_cur, Yp_cur, du)
+        Hc, lbc_ineq, ubc_ineq, ineq_flag = self._init_ineq_cons(ineqconidx, ineqconbd, Uf_cur, Yf_cur, du)
     
+        # Handle 'du' constraints separately if present
+        du_flag = False
+        if ineqconidx is not None and 'du' in ineqconidx:
+            idx = ineqconidx['du']
+            if idx:  # Check if there are indices to constrain
+                dim = self.u_dim
+                idx_H = [v + i * dim for i in range(self.Np) for v in idx]
+                h_du = du[idx_H]
+                lbdu = ineqconbd['lbdu']
+                ubdu = ineqconbd['ubdu']
+                lbc_du = np.tile(lbdu, self.Np).flatten().tolist()
+                ubc_du = np.tile(ubdu, self.Np).flatten().tolist()
+                du_flag = True
+
         # Start the Acados formulation
         model = AcadosModel()
         model.name = 'deepc'
@@ -231,34 +247,50 @@ class deepctools():
         r4 = Up_cur @ g - uini              # (n_u*Tini x 1): init‐condition slack - U
         r5 = g                              # (n_g    x 1): regularization
         print(f'The shape of r1:{r1.shape}, r2:{r2.shape},r3:{r3.shape},r4:{r4.shape},r5:{r5.shape}')
-        res = cs.vertcat(r1, r2, r3, r4, r5)
         # ocp.cost.cost_type = 'LINEAR_LS'        # For the LINEAR_LS, the weight matrix should be np array instead of casadi matrix, so should use "EXTERNAL" instead
-        H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + Up_cur.T @ lambda_u @ Up_cur + lambda_g
-        # H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + lambda_g
-        f = - Yp_cur.T @ lambda_y @ yini - Yf_cur.T @ Q @ yref - Up_cur.T @ lambda_u @ uini  
-        obj = 0.5 * cs.mtimes(cs.mtimes(g.T, H), g) + cs.mtimes(f.T, g)
+        # H = Yf_cur.T @ Q @ Yf_cur + Uf_cur.T @ R @ Uf_cur + Yp_cur.T @ lambda_y @ Yp_cur + Up_cur.T @ lambda_u @ Up_cur + lambda_g
+        # f = - Yp_cur.T @ lambda_y @ yini - Yf_cur.T @ Q @ yref - Up_cur.T @ lambda_u @ uini  
+        # obj = 0.5 * cs.mtimes(cs.mtimes(g.T, H), g) + cs.mtimes(f.T, g)
+        
+        # minimize the value of u
+        obj = r1.T @ Q @ r1 + r2.T @ R @ r2 + r3.T @ lambda_y @ r3 + r4.T @ lambda_u @ r4 + r5.T @ lambda_g @ r5
+
+        # minimize the change of u (du)
+        # obj = r1.T @ Q @ r1 + du.T @ R @ du + r3.T @ lambda_y @ r3 + r4.T @ lambda_u @ r4 + r5.T @ lambda_g @ r5
         ocp.cost.cost_type = 'EXTERNAL'
         ocp.cost.cost_type_e = 'EXTERNAL'
+        ocp.cost.cost_type = 'AUTO'
+        ocp.cost.cost_type_e = 'AUTO'
         model.cost_expr_ext_cost   = obj
         model.cost_expr_ext_cost_e = obj
 
         # Add equality constraint: Up g - uini == 0
         h_eq = cs.reshape(cs.mtimes(Up_cur, g) - uini, (-1, 1))  # Shape: (u_dim * Tini, 1)
 
-        if ineq_flag:
-            # — build a single SX vector h = [Hc@g; du]
-            h1 = cs.reshape(Hc @ g, (-1, 1))
-            # h2 = cs.reshape(du,     (-1, 1))
-            # h  = cs.vertcat(h1,     h2)      # now definitely (n_rows, 1)
-            # h = cs.vertcat(h1, h2, h_eq)
-            h = h1
-            lh_arr = np.array(lbc_ineq)
-            uh_arr = np.array(ubc_ineq)
+        # Build the constraint expression h and bounds
+        has_constraints = ineq_flag or du_flag
+        if has_constraints:
+            ocp.constraints.constr_type = 'BGH'
+            if ineq_flag:
+                h1 = cs.reshape(Hc @ g, (-1, 1))
+                lh_ineq = np.array(lbc_ineq)
+                uh_ineq = np.array(ubc_ineq)
+                if du_flag:
+                    h = cs.vertcat(h1, cs.reshape(h_du, (-1, 1)))
+                    lh_arr = np.concatenate((lh_ineq, np.array(lbc_du)))
+                    uh_arr = np.concatenate((uh_ineq, np.array(ubc_du)))
+                else:
+                    h = h1
+                    lh_arr = lh_ineq
+                    uh_arr = uh_ineq
+            else:  # Only du constraints
+                h = cs.reshape(h_du, (-1, 1))
+                lh_arr = np.array(lbc_du)
+                uh_arr = np.array(ubc_du)
             # print(f"h_sx size: ({h.size1()}×{h.size2()})")
             # print(f"  → expr_h has {h.size1()} rows and {h.size2()} cols")
             # print(f"  → lh   shape = {lh_arr.shape}")
             # print(f"  → uh   shape = {uh_arr.shape}")
-            ocp.constraints.constr_type = 'BGH'
             ocp.dims.nh                 = h.shape[0]
             ocp.model.con_h_expr        = h             # SX of shape (n_rows, 1)
             # — set matching numeric bounds: lh ≤ h(x,u) ≤ uh
@@ -270,6 +302,31 @@ class deepctools():
             ocp.constraints.con_h_expr  = cs.SX.zeros(0, 1)            # zero-row SX
             ocp.constraints.lh          = np.zeros(0)
             ocp.constraints.uh          = np.zeros(0)
+        # if ineq_flag:
+        #     # — build a single SX vector h = [Hc@g; du]
+        #     h1 = cs.reshape(Hc @ g, (-1, 1))
+        #     # h2 = cs.reshape(du,     (-1, 1))
+        #     # h  = cs.vertcat(h1,     h2)      # now definitely (n_rows, 1)
+        #     # h = cs.vertcat(h1, h2, h_eq)
+        #     h = h1
+        #     lh_arr = np.array(lbc_ineq)
+        #     uh_arr = np.array(ubc_ineq)
+        #     # print(f"h_sx size: ({h.size1()}×{h.size2()})")
+        #     # print(f"  → expr_h has {h.size1()} rows and {h.size2()} cols")
+        #     # print(f"  → lh   shape = {lh_arr.shape}")
+        #     # print(f"  → uh   shape = {uh_arr.shape}")
+        #     ocp.constraints.constr_type = 'BGH'
+        #     ocp.dims.nh                 = h.shape[0]
+        #     ocp.model.con_h_expr        = h             # SX of shape (n_rows, 1)
+        #     # — set matching numeric bounds: lh ≤ h(x,u) ≤ uh
+        #     ocp.constraints.lh          = lh_arr        # shape = (n_rows,)
+        #     ocp.constraints.uh          = uh_arr        # shape = (n_rows,)
+        # else:
+        #     # — no constraints: empty h, empty bounds
+        #     ocp.constraints.constr_type = 'BGH'
+        #     ocp.constraints.con_h_expr  = cs.SX.zeros(0, 1)            # zero-row SX
+        #     ocp.constraints.lh          = np.zeros(0)
+        #     ocp.constraints.uh          = np.zeros(0)
 
         ocp.solver_options.qp_solver          = "FULL_CONDENSING_HPIPM"
         ocp.solver_options.hessian_approx       = 'EXACT'                    # 'GAUSS_NEWTON' for "LINEAR_LS" cost_type
@@ -339,12 +396,34 @@ class deepctools():
             lambda_g_val.ravel(),   lambda_y_val.ravel(), lambda_u_val.ravel(),
         ])
 
+        # # choose hot-start if available
+        # # if g_prev is not None:
+        # #     # ensure the shape matches
+        # #     g0 = g_prev.ravel()
+        # # else:
+        # # give acados initial guess
+        # sqrt_lambda_u = np.sqrt(lambda_u_val)
+        # sqrt_lambda_y = np.sqrt(lambda_y_val)
+        # sqrt_lambda_g = np.sqrt(lambda_g_val)
+        # # Weighted stack for least-squares
+        # A_weighted = np.vstack([sqrt_lambda_u @ Up_cur, sqrt_lambda_y @ Yp_cur])
+        # b_weighted = np.vstack([sqrt_lambda_u @ uini, sqrt_lambda_y @ yini])
+        # if lambda_g_val[0,0] > 0:
+        #     I_g = np.eye(self.g_dim)
+        #     A_aug = np.vstack([A_weighted, sqrt_lambda_g @ I_g])
+        #     b_aug = np.vstack([b_weighted, np.zeros((self.g_dim, 1))])
+        #     g_default = np.linalg.lstsq(A_aug, b_aug, rcond=None)[0]
+        # else:
+        #     g_default = np.linalg.lstsq(A_weighted, b_weighted, rcond=None)[0]
+
+        # g_default = np.linalg.pinv(np.concatenate((Up_cur, Yp_cur), axis=0)) @ np.concatenate((uini, yini))
+        
         # choose hot-start if available
         if g_prev is not None:
             # ensure the shape matches
             g0 = g_prev.ravel()
         else:
-            # give acados initial guess
+        # give acados initial guess
             sqrt_lambda_u = np.sqrt(lambda_u_val)
             sqrt_lambda_y = np.sqrt(lambda_y_val)
             sqrt_lambda_g = np.sqrt(lambda_g_val)
@@ -360,6 +439,7 @@ class deepctools():
                 g_default = np.linalg.lstsq(A_weighted, b_weighted, rcond=None)[0]
             g_default = g_default.ravel()
             g0 = g_default
+
         self.solver.set( 0, "x", g0)
         self.solver.set( 0, "p", parameters )
 
@@ -370,7 +450,8 @@ class deepctools():
 
         g_opt = self.solver.get(0,"x")
         u_opt = Uf_cur @ g_opt              # which is same as np.matmul(Uf_cur, g_opt)
-        return u_opt, g_opt, t_s, exist_feasible_sol
+        cost = self.solver.get_cost()
+        return u_opt, g_opt, t_s, exist_feasible_sol, cost
     
     @timer
     def init_DeePCsolver(self, uloss='u', ineqconidx=None, ineqconbd=None, opts={}):
@@ -510,8 +591,8 @@ class deepctools():
         if self.g_dim <= self.u_dim * self.Tini:
             raise ValueError(f'NLP do not have enough degrees of freedom | Should: g_dim >= u_dim * Tini, but got: {self.g_dim} <= {self.u_dim * self.Tini}!')
 
-        # uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]      # define parameters and decision variable
-        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, Q, R = self.parameters[...]
+        uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, lambda_u, Q, R = self.parameters[...]      # define parameters and decision variable
+        # uini, yini, yref, Up_cur, Yp_cur, Uf_cur, Yf_cur, lambda_g, lambda_y, Q, R = self.parameters[...]
         g, = self.optimizing_target[...]  # data are stored in list [], notice that ',' cannot be missed
 
         if lambda_g is None or lambda_y is None:
@@ -566,32 +647,85 @@ class deepctools():
         self.lbc = lbc
         self.ubc = ubc
 
-    # def solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val):
-    def solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val):
+    def solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_u_val, lambda_y_val, g_prev=None):
         """
             solver solve the nlp for one time
             uini, yini:  [array]   | (dim*Tini, 1)
             uref, yref:  [array]   | (dim*Horizon, 1) if sp_change=True
-              g0_guess:  [array]   | (T-L+1, 1)
+            g0_guess:  [array]   | (T-L+1, 1)
             return:
                 u_opt:  the optimized control input for the next Np steps
-                 g_op:  the optimized operator g
-                  t_s:  solving time
+                g_op:  the optimized operator g
+                t_s:  solving time
         """
-
         if yref is None:
             raise ValueError("Did not give value of 'yref', but required in objective function!")
-        # parameters = np.concatenate((uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val))
-        parameters = np.concatenate((uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val))
-        g0_guess = np.linalg.pinv(np.concatenate((Up_cur, Yp_cur), axis=0)) @ np.concatenate((uini, yini))
+        
+        parameters = np.concatenate([
+            uini.ravel(), yini.ravel(), yref.ravel(),
+            Up_cur.ravel(), Yp_cur.ravel(),
+            Uf_cur.ravel(), Yf_cur.ravel(),
+            Q_val.ravel(),    R_val.ravel(),
+            lambda_g_val.ravel(),   lambda_y_val.ravel(), lambda_u_val.ravel(),
+        ])
+
+        if g_prev is not None:
+            # ensure the shape matches
+            g0 = g_prev.ravel()
+        else:
+            # give initial guess via weighted least squares
+            sqrt_lambda_u = np.sqrt(lambda_u_val)
+            sqrt_lambda_y = np.sqrt(lambda_y_val)
+            sqrt_lambda_g = np.sqrt(lambda_g_val)
+            # Weighted stack for least-squares
+            A_weighted = np.vstack([sqrt_lambda_u @ Up_cur, sqrt_lambda_y @ Yp_cur])
+            b_weighted = np.vstack([sqrt_lambda_u @ uini, sqrt_lambda_y @ yini])
+            if lambda_g_val[0,0] > 0:
+                I_g = np.eye(self.g_dim)
+                A_aug = np.vstack([A_weighted, sqrt_lambda_g @ I_g])
+                b_aug = np.vstack([b_weighted, np.zeros((self.g_dim, 1))])
+                g_default = np.linalg.lstsq(A_aug, b_aug, rcond=None)[0]
+            else:
+                g_default = np.linalg.lstsq(A_weighted, b_weighted, rcond=None)[0]
+            g_default = g_default.ravel()
+            g0 = g_default
 
         t0 = time.time()
-        sol = self.solver(x0=g0_guess, p=parameters, lbg=self.lbc, ubg=self.ubc)
-        t_s = round((time.time() - t0) * 1_000, 3)
+        status = self.solver(x0=g0, p=parameters, lbg=self.lbc, ubg=self.ubc)
+        exist_feasible_sol = (status == 0)
+        t_deepc = round((time.time() - t0) * 1_000, 3)
 
-        g_opt = sol['x'].full().ravel()
-        u_opt = np.matmul(Uf_cur, g_opt)
-        return u_opt, g_opt, t_s
+        g_opt = self.solver.get(0,"x")
+        u_opt = Uf_cur @ g_opt
+        cost = self.solver.get_cost()
+        return u_opt, g_opt, t_deepc, exist_feasible_sol, cost
+
+    # # def solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val):
+    # def solver_step(self, uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_u_val, lambda_y_val, g_prev):
+    #     """
+    #         solver solve the nlp for one time
+    #         uini, yini:  [array]   | (dim*Tini, 1)
+    #         uref, yref:  [array]   | (dim*Horizon, 1) if sp_change=True
+    #           g0_guess:  [array]   | (T-L+1, 1)
+    #         return:
+    #             u_opt:  the optimized control input for the next Np steps
+    #              g_op:  the optimized operator g
+    #               t_s:  solving time
+    #     """
+
+    #     if yref is None:
+    #         raise ValueError("Did not give value of 'yref', but required in objective function!")
+    #     # parameters = np.concatenate((uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val, lambda_u_val))
+    #     parameters = np.concatenate((uini, yini, yref, Up_cur, Uf_cur, Yp_cur, Yf_cur, Q_val, R_val, lambda_g_val, lambda_y_val))
+    #     g0_guess = np.linalg.pinv(np.concatenate((Up_cur, Yp_cur), axis=0)) @ np.concatenate((uini, yini))
+
+    #     t0 = time.time()
+    #     sol = self.solver(x0=g0_guess, p=parameters, lbg=self.lbc, ubg=self.ubc)
+    #     t_deepc = round((time.time() - t0) * 1_000, 3)
+
+    #     g_opt = sol['x'].full().ravel()
+    #     u_opt = np.matmul(Uf_cur, g_opt)
+    #     return u_opt, g_opt, t_deepc, exist_feasible_sol, cost
     
 
 # Adding lambda_u feature for dealing noisy u input

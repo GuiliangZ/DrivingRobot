@@ -50,19 +50,24 @@ def load_timeseries(data_dir):
 
 # System parameters
 algorithm_name = "deepc_toy_example"
-Ts = 0.1                                           # 100 Hz main control loop updating rate - Sampling time 
-Tini        = 30                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-THorizon    = 30                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-hankel_subB_size = 120                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+Ts = 0.1                                            # 100 Hz main control loop updating rate - Sampling time 
+Tini        = 20                                    # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
+THorizon    = 20                                    # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+hankel_subB_size = 80                               # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
 # Tini        = 20                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
 # THorizon    = 20                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
 # hankel_subB_size = 89                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
 
-Q_val = 100                                       # the weighting matrix of controlled outputs y
-R_val = 1                                         # the weighting matrix of control inputs u
-lambda_g_val = 50                                 # the weighting matrix of norm of operator g
-lambda_y_val = 10                                 # the weighting matrix of mismatch of controlled output y
-lambda_u_val= 10                                  # the weighting matrix of mismatch of controlled output u
+# Q_val = 10                                       # the weighting matrix of controlled outputs y
+# R_val = 50                                         # the weighting matrix of control inputs u
+# lambda_g_val = 70                                # the weighting matrix of norm of operator g
+# lambda_y_val = 10                                 # the weighting matrix of mismatch of controlled output y
+# lambda_u_val= 5                                  # the weighting matrix of mismatch of controlled output u
+Q_val = 10                                       # the weighting matrix of controlled outputs y
+R_val = 10                                         # the weighting matrix of control inputs u
+lambda_g_val = 1                                # the weighting matrix of norm of operator g
+lambda_y_val = 1                                 # the weighting matrix of mismatch of controlled output y
+lambda_u_val= 1                                  # the weighting matrix of mismatch of controlled output u
 T           = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
 g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
 u_dim       = 1                                   # the dimension of control inputs - DR case: 1 - PWM input
@@ -80,6 +85,29 @@ use_hankel_cached_sim = False
 # use_hankel_cached = True
 # use_data_for_hankel_cached_sim = True                   # True to reuse the .npz file build from excel sheet
 # use_hankel_cached_sim = True
+
+# Since the g_dim is too big, if use original deepctools, the matrix become untractable, need to use casadi representation to formulate the problem
+lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))                           # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
+lambda_y    = np.diag(np.tile(lambda_y_val, Tini))                            # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
+lambda_u  = np.diag(np.tile(lambda_u_val, Tini))                            # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
+Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
+R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
+
+# Added a constraint to regulated the rate of change of control input u
+ineqconidx  = {'u': [0], 'y':[0], 'du':[0]}                                     # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
+# ineqconidx  = {'u': [0], 'y':[0]} 
+ineqconbd   ={'lbu': np.array([-30]), 'ubu': ([100]),                           # specify the bounds for u and y
+                'lby': np.array([0]), 'uby': np.array([140]),
+                'lbdu': np.array([-10]), 'ubdu': np.array([1.5])}               # lower and upper bound for change of control input - can find the approximate range from baseline data for 100 Hz             
+# ineqconidx = {'u': list(range(u_dim)), 'y': list(range(y_dim))}
+# ineqconbd = {
+#     'lbu': np.tile([-30], Tini),  # Apply -30 to all u steps
+#     'ubu': np.tile([100], Tini),  # Apply 100 to all u steps
+#     'lby': np.tile([0], Tini),    # Apply 0 to all y steps
+#     'uby': np.tile([140], Tini),  # Apply 140 to all y steps
+#     # 'lbdu': np.tile([-10], Tini), # Add Delta u constraints
+#     # 'ubdu': np.tile([10], Tini)   # Add Delta u constraints
+# }
 
 print("[Main] Initiate DeePC setup and compile procedure..")
 PROJECT_DIR = Path().resolve()
@@ -136,10 +164,10 @@ else:
     print("[Main] Start to make hankel matrix data from cache... this may take a while")
     Up_sim, Uf_sim, Yp_sim, Yf_sim = hankel_full(ud_sim, yd_sim, Tini, THorizon)
     np.savez(CACHE_FILE_HANKEL_DATA_Sim, Up=Up_sim, Uf=Uf_sim, Yp=Yp_sim, Yf=Yf_sim)
-    print(f"[Main] Finished making data for hankel matrix with shape Up_sim{Up_sim.shape}, Uf_sim{Uf_sim.shape}, Yp_sim{Yp_sim.shape}, Yf_sim{Yf_sim.shape}, and saved to {CACHE_FILE_HANKEL_DATA}")
+    print(f"[Main] Finished making data for hankel matrix with shape Up_sim{Up_sim.shape}, Uf_sim{Uf_sim.shape}, Yp_sim{Yp_sim.shape}, Yf_sim{Yf_sim.shape}, and saved to {CACHE_FILE_Ori_DATA_Sim}")
 
 print(f"[Main] Finished making data for hankel matrix with shape Up{Up.shape}, Uf{Uf.shape}, Yp{Yp.shape}, Yf{Yf.shape}, and saved to {CACHE_FILE_HANKEL_DATA}")
-print(f"[Main] Finished making data for hankel matrix with shape Up_sim{Up_sim.shape}, Uf_sim{Uf_sim.shape}, Yp_sim{Yp_sim.shape}, Yf_sim{Yf_sim.shape}, and saved to {CACHE_FILE_HANKEL_DATA}")
+print(f"[Main] Finished making data for hankel matrix with shape Up_sim{Up_sim.shape}, Uf_sim{Uf_sim.shape}, Yp_sim{Yp_sim.shape}, Yf_sim{Yf_sim.shape}, and saved to {CACHE_FILE_Ori_DATA_Sim}")
 # print(f"vref:{vref}")
 # ─── System Setup ────────────────────────────────────────────────
 base_folder = "../"
@@ -179,31 +207,6 @@ try:
 except:
     print("Need to run as root (or have CAP_SYS_NICE)")
 
-
-
-# Since the g_dim is too big, if use original deepctools, the matrix become untractable, need to use casadi representation to formulate the problem
-lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))                           # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
-lambda_y    = np.diag(np.tile(lambda_y_val, Tini))                            # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
-lambda_u  = np.diag(np.tile(lambda_u_val, Tini))                            # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
-Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
-R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
-
-# Added a constraint to regulated the rate of change of control input u
-ineqconidx  = {'u': [0], 'y':[0], 'du':[0]}                                     # specify the wanted constraints for u and y - [0] means first channel which we only have 1 channel in DR project
-ineqconidx  = {'u': [0], 'y':[0]} 
-ineqconbd   ={'lbu': np.array([-30]), 'ubu': ([100]),                           # specify the bounds for u and y
-                'lby': np.array([0]), 'uby': np.array([140])}
-                # 'lbdu': np.array([-10]), 'ubdu': np.array([1.2])}               # lower and upper bound for change of control input - can find the approximate range from baseline data for 100 Hz             
-# ineqconidx = {'u': list(range(u_dim)), 'y': list(range(y_dim))}
-# ineqconbd = {
-#     'lbu': np.tile([-30], Tini),  # Apply -30 to all u steps
-#     'ubu': np.tile([100], Tini),  # Apply 100 to all u steps
-#     'lby': np.tile([0], Tini),    # Apply 0 to all y steps
-#     'uby': np.tile([140], Tini),  # Apply 140 to all y steps
-#     # 'lbdu': np.tile([-10], Tini), # Add Delta u constraints
-#     # 'ubdu': np.tile([10], Tini)   # Add Delta u constraints
-# }
-
 dpc_args = [u_dim, y_dim, T, Tini, THorizon]                                    # THorizon is Np in dpc class
 dpc_kwargs = dict(ineqconidx=ineqconidx, ineqconbd=ineqconbd)
 dpc = dpcAcados.deepctools(*dpc_args, **dpc_kwargs)
@@ -223,9 +226,6 @@ dpc.init_DeePCAcadosSolver(recompile_solver=recompile_solver, ineqconidx=ineqcon
 # dpc.init_RDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
 # dpc.init_FullRDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
 print("[Main] Finished compiling DeePC problem, starting the nominal system setup procedure!")
-
-
-
 
 # -----------------Reset states--------------------------------------------------------------------------------------
 loop_count     = 0
@@ -300,12 +300,15 @@ try:
         #       f"Yp_cur shape{Yp_cur.shape} value: {Yp_cur}, "
         #       f"Yf_cur shape{Yf_cur.shape} value: {Yf_cur}, "
         #       f"hankel_idx {hankel_idx}")
-        u_opt, g_opt, t_deepc, exist_feasible_sol = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=vref_cur,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
+        u_opt, g_opt, t_deepc, exist_feasible_sol, cost = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=vref_cur,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
                                                         Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q, R_val=R,
                                                         lambda_g_val=lambda_g, lambda_y_val=lambda_y, lambda_u_val=lambda_u, g_prev = g_prev)         
 
+        if np.all(u_opt == 0):
+            g_prev = None
+        else:
+            g_prev = g_opt
         u = u_opt[0]       
-
         actual_elapsed_time = round((time.perf_counter() - loop_start)*1000,3)
         # print(f"u: {u}, g_opt:{g_opt}, exist_feasible_sol:{exist_feasible_sol}, u_opt:{u_opt}")
         actual_control_frequency = 1/(actual_elapsed_time / 1000)
@@ -319,8 +322,9 @@ try:
             f"actual_control_frequency={actual_control_frequency:6.3f} Hz, "
             f"DeePC exist_feasible_sol={exist_feasible_sol}, "
             f"hankel_idx={hankel_idx}",
-            f"g_opt= {g_opt}",
+            # f"g_opt= {g_opt}",
             f"u_opt = {u_opt}",
+            f"DeePC_Cost = {cost}"
         )
 
         # print(f"loop_count: {loop_count}")
@@ -333,7 +337,7 @@ try:
 
         # ── 11) Schedule next tick at 100 Hz ───────────────────────────────
         next_time += Ts
-        g_prev = g_opt
+        
         loop_count += 1
         # Update hankel_idx: because this is not ROTS system, 
         # there's lags, it's not running exactly Ts per loop, 
@@ -352,8 +356,6 @@ try:
             "u":         u,
             # "error":     e_k,
             "t_deepc(ms)":   t_deepc,
-            # "BMS_socMin":BMS_socMin,
-            # "SOC_CycleStarting":SOC_CycleStarting,
             "exist_feasible_sol":exist_feasible_sol,
             "actual_elapsed_time":actual_elapsed_time,
             "hankel_idx": hankel_idx,
@@ -366,8 +368,9 @@ try:
             "Yf_cur": Yf_cur,
             "g_opt" : g_opt,
             "u_opt" : u_opt,
+            "DeePC_Cost" : cost,
         })
-        if elapsed_time >45:
+        if elapsed_time >50:
             break
 
 finally:
@@ -377,7 +380,7 @@ finally:
     datetime = datetime.now()
     df['run_datetime'] = datetime.strftime("%Y-%m-%d %H:%M:%S")
     timestamp_str = datetime.strftime("%H%M_%m%d")
-    excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{algorithm_name}_Ts_{Ts}_Q_{Q_val}_R_{R_val}.xlsx"
+    excel_filename = f"{timestamp_str}_DR_log_{veh_modelName}_{cycle_key}_{algorithm_name}_Ts{Ts}_Q{Q_val}_R{R_val}_Tini{Tini}_gDim{g_dim}_λg{lambda_g_val}_λu{lambda_u_val}__λy{lambda_y_val}.xlsx"
     log_dir = os.path.join(base_folder, "deepc", "toy_example_Log_DriveRobot")
     os.makedirs(log_dir, exist_ok=True)     
     excel_path = os.path.join(log_dir, excel_filename)

@@ -185,25 +185,25 @@ if __name__ == "__main__":
 
     Tini        = 20                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
     THorizon    = 20                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-    hankel_subB_size = 89                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
-    Q_val = 200                                        # the weighting matrix of controlled outputs y
+    hankel_subB_size = 80                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+    Q_val = 265                                        # the weighting matrix of controlled outputs y
     R_val = 0.3                                         # the weighting matrix of control inputs u
     lambda_g_val = 60                                 # the weighting matrix of norm of operator g
     lambda_y_val = 10                                 # the weighting matrix of mismatch of controlled output y
-    lambda_u_val= 10                                  # the weighting matrix of mismatch of controlled output u
-    T           = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
-    g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
+    lambda_u_val = 10                                  # the weighting matrix of mismatch of controlled output u
+    T            = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
+    g_dim        = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
     
     # Smaller values (e.g., 0.05) result in slower decay, while larger values (e.g., 0.2) focus more on the first few steps.
-    decay_rate_q = 0.1                                  # decay rate for Q weights
+    decay_rate_q = 0.3                                  # decay rate for Q weights
     decay_rate_r = 0.1                                  # decay rate for R weights
     # Define Q and R with exponential decay
     q_weights = Q_val * np.exp(-decay_rate_q * np.arange(THorizon))
     r_weights = R_val * np.exp(-decay_rate_r * np.arange(THorizon))
     Q = np.diag(q_weights)                              # Shape (THorizon, THorizon)
     R = np.diag(r_weights)                              # Shape (THorizon, THorizon)
-    # Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
-    # R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
+    Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
+    R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
     lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))                           # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
     lambda_y    = np.diag(np.tile(lambda_y_val, Tini))                            # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
     lambda_u  = np.diag(np.tile(lambda_u_val, Tini))                              # weighting matrix of noise of u - shape(dim*Tini, dim*Tini)
@@ -252,7 +252,7 @@ if __name__ == "__main__":
     dpc = dpcAcados.deepctools(*dpc_args, **dpc_kwargs)
 
     # init and formulate deepc solver
-    dpc.init_DeePCAcadosSolver(recompile_solver=recompile_solver, ineqconidx=ineqconidx, ineqconbd=ineqconbd) # Use acados solver
+    # dpc.init_DeePCAcadosSolver(recompile_solver=recompile_solver, ineqconidx=ineqconidx, ineqconbd=ineqconbd) # Use acados solver
     dpc_opts = {                            # cs.nlpsol solver parameters - not used in acados
         'ipopt.max_iter': 100,  # 50
         'ipopt.tol': 1e-5,
@@ -263,7 +263,7 @@ if __name__ == "__main__":
     }
     # Specify what solver wanted to use - # Those solver are available as part of the deepctools, but may be slower than DeePCAcados for real time application
     # dpc.init_DeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)            
-    # dpc.init_RDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
+    dpc.init_RDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
     # dpc.init_FullRDeePCsolver(uloss='u', ineqconidx=ineqconidx, ineqconbd=ineqconbd, opts=dpc_opts)
     print("[Main] Finished compiling DeePC problem, starting the nominal system setup procedure!")
     
@@ -413,9 +413,12 @@ if __name__ == "__main__":
                 # check that none of the required arrays contain a zero
                 arrays_to_check = [Up_cur, Uf_cur, Yp_cur, Yf_cur, u_init, y_init, ref_horizon_speed]
                 DeePC_control = all(np.all(arr != 0) for arr in arrays_to_check)
-                u_opt, g_opt, t_deepc, exist_feasible_sol = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
+                # u_opt, g_opt, t_deepc, exist_feasible_sol, cost = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
+                #                                                     Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q, R_val=R,
+                #                                                     lambda_g_val=lambda_g, lambda_y_val=lambda_y, lambda_u_val=lambda_u, g_prev = g_prev)     
+                u_opt, g_opt, t_deepc, exist_feasible_sol, cost = dpc.solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
                                                                     Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q, R_val=R,
-                                                                    lambda_g_val=lambda_g, lambda_y_val=lambda_y, lambda_u_val=lambda_u, g_prev = g_prev)     
+                                                                   lambda_g_val=lambda_g, lambda_y_val=lambda_y, lambda_u_val=lambda_u, g_prev = g_prev)     
                 g_prev = g_opt
                 # if v_meas == 0.0:
                 #     g_prev = None
@@ -458,6 +461,7 @@ if __name__ == "__main__":
                     f"v_meas={v_meas:6.2f}kph, e={e_k:+6.2f}kph, "
                     f"u={u:6.2f}%, "
                     f"F_dyno={F_meas:6.2f} N, "
+                    f"DeePC_Cost= {cost}, "
                     f"BMS_socMin={BMS_socMin:6.2f} %,"
                     f"SOC_CycleStarting AT={SOC_CycleStarting:6.2f} %, "
                     f"DeePC exist_feasible_sol={exist_feasible_sol}, "
@@ -465,7 +469,7 @@ if __name__ == "__main__":
                     f"PID_control_activate={PID_control_activate}, "
                     f"t_deepc={t_deepc:6.3f} ms, "
                     f"actual_elapsed_time_per_loop={actual_elapsed_time:6.3f} ms, "
-                    f"actual_control_frequency={actual_control_frequency:6.3f} Hz"
+                    f"actual_control_frequency={actual_control_frequency:6.3f} Hz "
                     f"hankel_idx={hankel_idx:6.3f}"
                 )
 
@@ -512,6 +516,7 @@ if __name__ == "__main__":
                     "u":         u,
                     "error":     e_k,
                     "t_deepc(ms)":   t_deepc,
+                    "DeePC_Cost" : cost,
                     "BMS_socMin":BMS_socMin,
                     "SOC_CycleStarting":SOC_CycleStarting,
                     "exist_feasible_sol":exist_feasible_sol,

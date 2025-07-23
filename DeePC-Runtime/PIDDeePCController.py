@@ -166,7 +166,7 @@ if __name__ == "__main__":
     FeedFwdTime = 0.65                                  # feedforward reference speed time
     T_f = 5000.0                                        # Derivative filter coefficient. Formula uses: D_f[k] = D_f[k-1] + (T_s / (T_s + T_f)) * (D_k - D_f[k-1])
 
-    Ts = 0.05                                           # 100 Hz main control loop updating rate - Sampling time 
+    Ts = 0.1                                           # 100 Hz main control loop updating rate - Sampling time 
                 # (if the actual loop time is larger than this Ts, the loop will updated at the actual computation time. 
                 # It will only be at this control frequency when the loop is fast enough to finish computation under this time)
     
@@ -179,30 +179,30 @@ if __name__ == "__main__":
     use_data_for_hankel_cached = False                  # when want to load new excel data for building hankel matrix
     use_hankel_cached = False
     # Flip those logic to reuse what has already compiled to save time
-    # recompile_solver = True
+    recompile_solver = True
     use_data_for_hankel_cached = True                   # True to reuse the .npz file build from excel sheet
     use_hankel_cached = True
 
-    Tini        = 20                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
-    THorizon    = 20                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
-    hankel_subB_size = 80                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
+    Tini        = 30                                  # Size of the initial set of data       - 0.5s(5s) bandwidth (50)
+    THorizon    = 30                                  # Prediction Horizon length - Np        - 0.5s(5s) bandwidth (50) 
+    hankel_subB_size = 120                             # >(Tini+THorizon)*2-hankel sub-Block column size at each run-time step (199-299)!!! very important hyperparameter to tune. When 
     Q_val = 265                                        # the weighting matrix of controlled outputs y
-    R_val = 0.3                                         # the weighting matrix of control inputs u
-    lambda_g_val = 100                                 # the weighting matrix of norm of operator g
+    R_val = 0.15                                         # the weighting matrix of control inputs u
+    lambda_g_val = 60                                 # the weighting matrix of norm of operator g
     lambda_y_val = 10                                 # the weighting matrix of mismatch of controlled output y
     lambda_u_val= 10                                  # the weighting matrix of mismatch of controlled output u
     T           = hankel_subB_size                    # the length of offline collected data - In my problem, OCP only see moving window of data which is same as "hankel_subB_size"
     g_dim       = T-Tini-THorizon+1                   # g_dim=T-Tini-Np+1 [Should g_dim >= u_dim * (Tini + Np)]
     
     # Smaller values (e.g., 0.05) result in slower decay, while larger values (e.g., 0.2) focus more on the first few steps.
-    decay_rate_q = 0.1                                  # decay rate for Q weights
+    decay_rate_q = 0.9                                  # decay rate for Q weights
     decay_rate_r = 0.1                                  # decay rate for R weights
     # # Define Q and R with exponential decay
     q_weights = Q_val * np.exp(-decay_rate_q * np.arange(THorizon))
     r_weights = R_val * np.exp(-decay_rate_r * np.arange(THorizon))
     Q = np.diag(q_weights)                              # Shape (THorizon, THorizon)
     R = np.diag(r_weights)                              # Shape (THorizon, THorizon)
-    # Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
+    Q           = np.diag(np.tile(Q_val, THorizon))                               # the weighting matrix of controlled outputs y - Shape(THorizon, THorizon)-diagonal matrix
     R           = np.diag(np.tile(R_val, THorizon))                               # the weighting matrix of control inputs u - Shape(THorizon, THorizon)-diagonal matrix
     lambda_g    = np.diag(np.tile(lambda_g_val, g_dim))                           # weighting of the regulation of g (eq. 8) - shape(T-L+1, T-L+1)
     lambda_y    = np.diag(np.tile(lambda_y_val, Tini))                            # weighting matrix of noise of y (eq. 8) - shape(dim*Tini, dim*Tini)
@@ -413,14 +413,17 @@ if __name__ == "__main__":
                 # check that none of the required arrays contain a zero
                 arrays_to_check = [Up_cur, Uf_cur, Yp_cur, Yf_cur, u_init, y_init, ref_horizon_speed]
                 DeePC_control = all(np.all(arr != 0) for arr in arrays_to_check)
-                u_opt, g_opt, t_deepc, exist_feasible_sol = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
+                u_opt, g_opt, t_deepc, exist_feasible_sol, cost = dpc.acados_solver_step(uini=u_init, yini=y_init, yref=ref_horizon_speed,           # For real-time Acados solver-Generate a time series of "optimal" control input given v_ref and previous u and v_dyno(for implicit state estimation)
                                                                     Up_cur=Up_cur, Uf_cur=Uf_cur, Yp_cur=Yp_cur, Yf_cur=Yf_cur, Q_val=Q, R_val=R,
                                                                     lambda_g_val=lambda_g, lambda_y_val=lambda_y, lambda_u_val=lambda_u, g_prev = g_prev)     
-                g_prev = g_opt
-                # if v_meas == 0.0:
-                #     g_prev = None
-                # else:
-                #     g_prev = g_opt      # hot start g_opt
+                if np.all(u_opt == 0):
+                    g_prev = None
+                else:
+                    g_prev = g_opt
+
+                if cost < 0:
+                    DeePC_control = False
+
                 if DeePC_control and exist_feasible_sol:
                         u_unclamped = u_opt[0]
                         PID_control_activate = False
@@ -466,7 +469,8 @@ if __name__ == "__main__":
                     f"t_deepc={t_deepc:6.3f} ms, "
                     f"actual_elapsed_time_per_loop={actual_elapsed_time:6.3f} ms, "
                     f"actual_control_frequency={actual_control_frequency:6.3f} Hz"
-                    f"hankel_idx={hankel_idx:6.3f}"
+                    f"hankel_idx={hankel_idx:6.3f}, "
+                    f"DeePC_Cost = {cost} "
                 )
 
                 # Debug purpose
@@ -506,30 +510,31 @@ if __name__ == "__main__":
                
                 # 12) Append this tick’s values to log_data
                 log_data.append({
-                    "time":      elapsed_time,
-                    "v_ref":     rspd_now,
-                    "v_meas":    v_meas,
-                    "u":         u,
-                    "error":     e_k,
-                    "t_deepc(ms)":   t_deepc,
-                    "BMS_socMin":BMS_socMin,
-                    "SOC_CycleStarting":SOC_CycleStarting,
-                    "exist_feasible_sol":exist_feasible_sol,
-                    "DeePC_control": DeePC_control,
-                    "PID_control_activate":PID_control_activate,
-                    "actual_elapsed_time":actual_elapsed_time,
-                    "hankel_idx":hankel_idx,
-                    "vref":ref_horizon_speed,
-                    "u_init": u_init,
-                    "y_init": y_init,
-                    "Up_cur": Up_cur,
-                    "Uf_cur": Uf_cur,
-                    "Yp_cur": Yp_cur,
-                    "Yf_cur": Yf_cur,
-                    "g_opt" : g_opt,
-                    "u_opt" : u_opt,
-                    "q_weights":q_weights,
-                    "r_weights":r_weights
+                    "time":                 elapsed_time,
+                    "v_ref":                rspd_now,
+                    "v_meas":               v_meas,
+                    "u":                    u,
+                    "error":                e_k,
+                    "t_deepc(ms)":          t_deepc,
+                    "DeePC_Cost" :          cost,
+                    "BMS_socMin":           BMS_socMin,
+                    "SOC_CycleStarting":    SOC_CycleStarting,
+                    "exist_feasible_sol":   exist_feasible_sol,
+                    "DeePC_control":        DeePC_control,
+                    "PID_control_activate": PID_control_activate,
+                    "actual_elapsed_time":  actual_elapsed_time,
+                    "hankel_idx":           hankel_idx,
+                    "vref":                 ref_horizon_speed,
+                    "u_init":               u_init,
+                    "y_init":               y_init,
+                    "Up_cur":               Up_cur,
+                    "Uf_cur":               Uf_cur,
+                    "Yp_cur":               Yp_cur,
+                    "Yf_cur":               Yf_cur,
+                    "g_opt" :               g_opt,
+                    "u_opt" :               u_opt,
+                    "q_weights":            q_weights,
+                    "r_weights":            r_weights,
                 })
                 if BMS_socMin <= SOC_Stop:
                     break
@@ -570,4 +575,3 @@ if __name__ == "__main__":
     bus.close()
     print("[Main] pca board PWM signal cleaned up and exited.")
     print("[Main] Cleaned up and exited.")
-

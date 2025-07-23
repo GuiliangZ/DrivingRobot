@@ -195,7 +195,7 @@ if __name__ == "__main__":
     use_data_for_hankel_cached = False                 # when want to load new excel data for building hankel matrix
     use_hankel_cached = False
     # Flip those logic to reuse what has already compiled to save time
-    recompile_solver = False
+    # recompile_solver = False
     # use_data_for_hankel_cached = True                  # True to reuse the .npz file build from excel sheet
     # use_hankel_cached = True
     # Tini        = 30                                 # Size of the initial set of data       - 0.5s(5s) bandwidth (50)

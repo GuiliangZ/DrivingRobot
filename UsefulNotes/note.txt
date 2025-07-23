@@ -47,4 +47,11 @@ ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCwknlJmjwYE8Da1sy6oJ5HRYLKJi53yzggpBa4qR3S
 
 sshd25519 AAAAC3NzaC1lZDI1NTE5AAAAIIteCuIoBJyzcg+bsG42q/uuS06PGsStzWlhOGvJb4wW guiliangzheng@outlook.com
 
+unset LD_LIBRARY_PATH
+
+Claude Code
+Open terminal cd to target folder
+
+
+
 
