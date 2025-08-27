@@ -14,3 +14,11 @@ deepc/dataForHankle/smallDataSet/hankel_matrix.npz
 *.h
 *.so
 
+/c_generated_code/
+/deepc/c_generated_code/
+/AcadosModelDeePC/**/c_generated_code/
+*.o
+*.so
+*.xlsx
+DeePC_acados_ocp.json
+deepc/DeePC_acados_ocp.json
